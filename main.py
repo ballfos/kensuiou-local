@@ -10,10 +10,11 @@ model_path = 'yolov5/runs/train/exp5/weights/best.pt'  # トレーニング時�
 # トレーニング済みモデルをロード
 model = torch.hub.load('ultralytics/yolov5', 'custom', path=model_path)
 
-image_directory = "gaku_test"  # 画像が保存されているディレクトリ
+image_directory = "inoue_test"  # 画像が保存されているディレクトリ
 image_counter = 0  # 呼び出し回数をカウントする変数
-bar_y_coordinate = 500 #バーのy座標
-
+bar_y_coordinate = 380 #バーのy座標
+bar_x_reft = 770 #バーのx座標左
+bar_x_right = 370 #バーのx座標右
 
 def receive_image():
 
@@ -69,7 +70,7 @@ def main():
     while True: #顔認識が成功するまで待機
         image_path = receive_image()
         name = identify_person(image_path)
-        if name == "none" :
+        if name == "none"  or name == "guest":
             continue
         else:
             break
@@ -77,7 +78,12 @@ def main():
     while True: #バーを持つまで待機
         image_path = receive_image()
         centers = detect_objects_and_get_centers(image_path)
+
         if len(centers["hand"]) == 2 and all(y <= bar_y_coordinate for _, y in centers["hand"]):
+            if centers["hand"][0][0] <= bar_x_reft and centers["hand"][1][0] >= bar_x_right:
+                isnallow = True
+            else:
+                isnallow = False
             break
 
 
@@ -89,7 +95,7 @@ def main():
         centers = detect_objects_and_get_centers(image_path)    
 
         #手が二つ検出されない、またはバーより下にある時、カウントの終了
-        if len(centers["hand"]) != 2 or all(y > bar_y_coordinate for _, y in centers["hand"]):
+        if len(centers["hand"]) != 2 or all(y > bar_y_coordinate +100 for _, y in centers["hand"]):
             break
 
         #頭がバーより上に来た時、回数追加、フラグのリセット
@@ -98,16 +104,17 @@ def main():
             count = count+1
         
         #頭を一定値下げるとフラグを1にする
-        if hand_flg == 0 and centers["face"][0][1] > bar_y_coordinate + 50:
+        if hand_flg == 0 and centers["face"][0][1] > bar_y_coordinate :
             hand_flg = 1
 
         print("image:",image_counter)
         print("Face Centers:", centers["face"])
         print("Hand Centers:", centers["hand"])
-        
 
+        
     print(f"player: {name}")
     print("count=",count)
+    print("isnallow=",isnallow)
 
 
 if __name__ == "__main__":

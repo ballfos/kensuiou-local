@@ -11,3 +11,4 @@ wheels/
 test_images
 sample
 face_images
+*_test
