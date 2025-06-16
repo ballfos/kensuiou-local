@@ -12,3 +12,5 @@ test_images
 sample
 face_images
 *_test
+captured_images
+.env
