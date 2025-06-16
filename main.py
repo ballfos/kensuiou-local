@@ -10,7 +10,7 @@ model_path = 'yolov5/runs/train/exp5/weights/best.pt'  # トレーニング時�
 # トレーニング済みモデルをロード
 model = torch.hub.load('ultralytics/yolov5', 'custom', path=model_path)
 
-image_directory = "test_images"  # 画像が保存されているディレクトリ
+image_directory = "gaku_test"  # 画像が保存されているディレクトリ
 image_counter = 0  # 呼び出し回数をカウントする変数
 bar_y_coordinate = 500 #バーのy座標
 
@@ -69,7 +69,7 @@ def main():
     while True: #顔認識が成功するまで待機
         image_path = receive_image()
         name = identify_person(image_path)
-        if name == "none":
+        if name == "none" :
             continue
         else:
             break

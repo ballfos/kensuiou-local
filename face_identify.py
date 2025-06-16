@@ -17,7 +17,6 @@ def identify_person(image_path,  threshold=0.6):
     face_encodings = face_recognition.face_encodings(image)
 
     if len(face_encodings) == 0:
-        print("警告: 入力画像から顔が検出されませんでした")
         return "none"
 
     # 入力画像に含まれる最初の顔で判定
