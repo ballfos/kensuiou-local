@@ -25,7 +25,8 @@ model = torch.hub.load('ultralytics/yolov5', 'custom', path=model_path)
 cap = cv2.VideoCapture(0)
 
 image_counter = 0  # 呼び出し回数をカウントする変数
-bar_y_coordinate = 470 #バーのy座標
+hand_coordinate = 500
+# bar_y_coordinate = 470 #バーのy座標
 bar_x_reft = 770 #バーのx座標左
 bar_x_right = 370 #バーのx座標右
 
@@ -116,8 +117,9 @@ def main():
         image_path = receive_image()
         centers = detect_objects_and_get_centers(image_path)
 
-        if len(centers["hand"]) == 2 and all(y <= bar_y_coordinate for _, y in centers["hand"]):
+        if len(centers["hand"]) == 2 and all(y <= hand_coordinate for _, y in centers["hand"]):
             print("start")
+
             if centers["hand"][0][0] <= bar_x_reft and centers["hand"][1][0] >= bar_x_right:
                 wide = False
             else:
@@ -131,19 +133,20 @@ def main():
         
         # 画像の処理
         centers = detect_objects_and_get_centers(image_path)    
+        bar_y_coordinate = centers["hand"][0][1]  #手のy座標をバーのy座標とする
 
         #手が二つ検出されない、またはバーより下にある時、カウントの終了
-        if len(centers["hand"]) != 2 or all(y > bar_y_coordinate +100 for _, y in centers["hand"]):
+        if len(centers["hand"]) != 2 or all(y > hand_coordinate for _, y in centers["hand"]):
             break
 
         #頭がバーより上に来た時、回数追加、フラグのリセット
-        if hand_flg == 1 and centers["face"][0][1] <= bar_y_coordinate:
+        if hand_flg == 1 and centers["face"][0][1] <= bar_y_coordinate :
             hand_flg =0
             count = count+1
             print(f"count={count}")
         
         #頭を一定値下げるとフラグを1にする
-        if hand_flg == 0 and centers["face"][0][1] > bar_y_coordinate :
+        if hand_flg == 0 and centers["face"][0][1] > bar_y_coordinate +30:
             hand_flg = 1
 
         # print("Face Centers:", centers["face"])

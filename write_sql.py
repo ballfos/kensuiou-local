@@ -4,7 +4,8 @@ import psycopg2
 student_ids = {
     "inoue": "25622038",
     "takahashi": "25622041",
-    "kawano": "25622021"
+    "kawano": "25622021",
+    "suzuki": "25622015",
 }
 
 
