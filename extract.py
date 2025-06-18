@@ -30,7 +30,7 @@ def identify_person(image_path,  threshold=0.6):
     if distances[best_match_index] <= threshold:
         return known_names[best_match_index]
     else:
-        return "guest"
+        return "none"
 
 def detect_objects_and_get_centers(model,image_path):
     import cv2

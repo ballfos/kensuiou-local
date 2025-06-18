@@ -76,7 +76,9 @@ async def receive_image(websocket):
 
         elif status == "Counting":
             centers = detect_objects_and_get_centers(model,file_path)    
-            bar_y_coordinate = centers["hand"][0][1]  #手のy座標をバーのy座標とする
+            if len(centers["hand"]) == 2:
+               bar_y_coordinate = centers["hand"][0][1]  #手のy座標をバーのy座標とする
+
 
             #手が二つ検出されない、またはバーより下にある時、カウントの終了
             if len(centers["hand"]) != 2 or all(y > hand_coordinate for _, y in centers["hand"]):
@@ -89,7 +91,7 @@ async def receive_image(websocket):
                 print(f"count={count}")
             
             #頭を一定値下げるとフラグを1にする
-            elif hand_flg == 0 and centers["face"][0][1] > bar_y_coordinate +30:
+            elif hand_flg == 0 and centers["face"][0][1] > bar_y_coordinate + 100:
                 hand_flg = 1
         if status == "end":
             response = {

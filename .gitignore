@@ -16,4 +16,3 @@ captured_images
 .env
 received_images
 face_features.json
-write_sql.py
