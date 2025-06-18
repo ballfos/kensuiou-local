@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import os
 import torch
-from face_identify import identify_person
+from extract import identify_person
 import psycopg2
 import dotenv
 import os
@@ -25,7 +25,7 @@ model = torch.hub.load('ultralytics/yolov5', 'custom', path=model_path)
 cap = cv2.VideoCapture(0)
 
 image_counter = 0  # 呼び出し回数をカウントする変数
-hand_coordinate = 500
+hand_coordinate = 550
 # bar_y_coordinate = 470 #バーのy座標
 bar_x_reft = 770 #バーのx座標左
 bar_x_right = 370 #バーのx座標右

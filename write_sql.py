@@ -6,6 +6,7 @@ student_ids = {
     "takahashi": "25622041",
     "kawano": "25622021",
     "suzuki": "25622015",
+    "okura": "25622047",
 }
 
 
