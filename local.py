@@ -14,7 +14,7 @@ pygame.mixer.init()
 
 # フルスクリーンモードのウィンドウを作成
 screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-pygame.display.set_caption("外部モニターにフルスクリーン表示")
+pygame.display.set_caption("kensuiou")
 font = pygame.font.Font("/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc", 100)
 text_color = (255, 255, 255)  # 白色
 background_color = (0, 0, 0)  # 黒色
