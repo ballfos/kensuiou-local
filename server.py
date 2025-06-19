@@ -62,8 +62,8 @@ async def receive_image(websocket):
             name = identify_person(file_path)
             if name != "none":
                 status = "Authenticated"
-                name = get_nickname(connection, name)
-                print(f"Identified: {name}")
+                nickname = get_nickname(connection, name)
+                print(f"Identified: {nickname}")
 
         elif status == "Authenticated":
             centers = detect_objects_and_get_centers(model,file_path)
@@ -97,18 +97,19 @@ async def receive_image(websocket):
         if status == "end":
             response = {
             "status": status,
-            "name": name,
+            "name": nickname,
             "count": count
         }
             await websocket.send(json.dumps(response))
             # データベースに記録
             register_record(connection, name, count, wide)
-            print(f"player: {name}")
+            print(f"player: {nickname}")
             print("count=", count)
             print("wide=", wide)
             # 状態をリセット
             status = "start"
             name = "none"
+            nickname = "none"
             count = 0
             hand_flg = 1
             

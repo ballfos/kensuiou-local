@@ -10,6 +10,7 @@ import pygame
 
 os.environ['SDL_VIDEO_WINDOW_POS'] = "0, -1080"  # 外部モニターの左上座標
 pygame.init()
+pygame.mixer.init()
 
 # フルスクリーンモードのウィンドウを作成
 screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
@@ -17,9 +18,12 @@ pygame.display.set_caption("外部モニターにフルスクリーン表示")
 font = pygame.font.Font("/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc", 100)
 text_color = (255, 255, 255)  # 白色
 background_color = (0, 0, 0)  # 黒色
+sound = pygame.mixer.Sound("coin.mp3")
+
 
 async def send_images():
     async with websockets.connect("ws://localhost:8765") as websocket:
+        previous_count = 0  # 前回のカウントを保持する変数
 
         while True :
             #　カメラから画像を撮りサーバーに送り続ける
@@ -54,10 +58,13 @@ async def send_images():
             elif response_data.get("status") == "Counting":
                 name = response_data.get("name")
                 count = response_data.get("count")
+                if previous_count != count:
+                    sound.play()
+                previous_count = count 
                 if count == 0:
                     text = font.render(f"スタート！！！", True, text_color)
-  
                 else :
+
                     text = font.render(f" {count}回！！", True, text_color)
                 screen.blit(text, (150, 150))
                 pygame.display.flip()
