@@ -9,7 +9,7 @@ from extract import identify_person,detect_objects_and_get_centers
 import psycopg2
 import dotenv
 import os
-from write_sql import register_record
+from write_sql import register_record, get_nickname
 import json
 
 dotenv.load_dotenv()
@@ -62,6 +62,7 @@ async def receive_image(websocket):
             name = identify_person(file_path)
             if name != "none":
                 status = "Authenticated"
+                name = get_nickname(connection, name)
                 print(f"Identified: {name}")
 
         elif status == "Authenticated":

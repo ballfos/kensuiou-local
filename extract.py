@@ -71,5 +71,8 @@ def detect_objects_and_get_centers(model,image_path):
 
     # x座標でhandのリストをソート（大きい順）
     centers["hand"].sort(key=lambda coord: coord[0], reverse=True)
+    if not centers["face"]:
+       centers["face"].append((500, 500))
+
 
     return centers

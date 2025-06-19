@@ -4,8 +4,19 @@ import asyncio
 import base64
 import cv2
 import json
+import pygame
+
 # 送信する画像が保存されているディレクトリ
-image_dir = "captured_images"
+
+os.environ['SDL_VIDEO_WINDOW_POS'] = "0, -1080"  # 外部モニターの左上座標
+pygame.init()
+
+# フルスクリーンモードのウィンドウを作成
+screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+pygame.display.set_caption("外部モニターにフルスクリーン表示")
+font = pygame.font.Font("/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc", 100)
+text_color = (255, 255, 255)  # 白色
+background_color = (0, 0, 0)  # 黒色
 
 async def send_images():
     async with websockets.connect("ws://localhost:8765") as websocket:
@@ -24,11 +35,51 @@ async def send_images():
             await websocket.send(encoded_image)
             response = await websocket.recv()
             response_data = json.loads(response)
+
+            screen.fill(background_color)
+
+            if response_data.get("status") == "start":
+                text = font.render("顔認証中、、、、", True, text_color)
+                screen.blit(text, (150, 150))
+                pygame.display.flip()
+
+            elif response_data.get("status") == "Authenticated":
+                name = response_data.get("name")
+                text = font.render(f"{name}さん、こんにちは！", True, text_color)
+                screen.blit(text, (150, 150))
+                text = font.render(f"バーを持ってください！", True, text_color)
+                screen.blit(text, (150, 400))
+                pygame.display.flip()
+
+            elif response_data.get("status") == "Counting":
+                name = response_data.get("name")
+                count = response_data.get("count")
+                if count == 0:
+                    text = font.render(f"スタート！！！", True, text_color)
+  
+                else :
+                    text = font.render(f" {count}回！！", True, text_color)
+                screen.blit(text, (150, 150))
+                pygame.display.flip()
+                    
             if response_data.get("status") == "end":
-               print(f"name: {response_data.get('name')}, Count: {response_data.get('count')}")
-               break
+                name = response_data.get("name")
+                count = response_data.get("count")
+                text = font.render(f"結果", True, text_color)
+                screen.blit(text, (150, 150))
+                text = font.render(f"{name}さん、{count}回！！", True, text_color)
+                screen.blit(text, (150, 400))
+               
+                print(f"name: {response_data.get('name')}, Count: {response_data.get('count')}")
+                # 10秒後に終了
+                pygame.display.flip()
+                await asyncio.sleep(10)
+                
+
+                break
                 
         cap.release()   
 
 if __name__ == "__main__":
     asyncio.run(send_images())
+    

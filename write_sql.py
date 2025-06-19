@@ -28,3 +28,11 @@ def register_record(connection, name, count, wide):
     connection.commit()
     cursor.close()
 
+def get_nickname(connection, name):
+    cursor = connection.cursor()
+    cursor.execute("""
+        SELECT nickname FROM members WHERE student_id = %s
+    """, (student_ids.get(name),))
+    result = cursor.fetchone()
+    cursor.close()
+    return result[0] if result else name
