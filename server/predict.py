@@ -1,12 +1,13 @@
-import face_recognition
-import numpy as np
 import json
 
-def identify_person(image_path,  threshold=0.6):
+import cv2
+import face_recognition
+import numpy as np
 
-    face_features_json = "face_features.json"  # 既存の顔データが保存されているJSONファイル
+
+def identify_person(image_path, face_features_path, threshold=0.6):
     # 既存の顔データをロード
-    with open(face_features_json, "r") as f:
+    with open(face_features_path, "r") as f:
         known_faces = json.load(f)
 
     known_encodings = [np.array(face["encoding"]) for face in known_faces]
@@ -22,7 +23,7 @@ def identify_person(image_path,  threshold=0.6):
     # 入力画像に含まれる最初の顔で判定
     input_encoding = face_encodings[0]
     distances = face_recognition.face_distance(known_encodings, input_encoding)
-    
+
     # 最も近い顔のインデックスを取得
     best_match_index = np.argmin(distances)
 
@@ -32,9 +33,8 @@ def identify_person(image_path,  threshold=0.6):
     else:
         return "none"
 
-def detect_objects_and_get_centers(model,image_path):
-    import cv2
-    import numpy as np
+
+def detect_objects_and_get_centers(model, image_path):
 
     # 画像を読み込む
     frame = cv2.imread(image_path)
@@ -49,7 +49,7 @@ def detect_objects_and_get_centers(model,image_path):
 
     # 検出結果を取得
     detections = results.xyxy[0].cpu().numpy()
-    
+
     # クラスIDに対応するラベルを定義
     class_labels = {0: "Face", 1: "Hand"}
 
@@ -72,7 +72,6 @@ def detect_objects_and_get_centers(model,image_path):
     # x座標でhandのリストをソート（大きい順）
     centers["hand"].sort(key=lambda coord: coord[0], reverse=True)
     if not centers["face"]:
-       centers["face"].append((500, 500))
-
+        centers["face"].append((500, 500))
 
     return centers

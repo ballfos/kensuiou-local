@@ -8,6 +8,8 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Custom
 test_images
 sample
 face_images
@@ -17,3 +19,4 @@ captured_images
 received_images
 face_features.json
 coin.mp3
+models/
