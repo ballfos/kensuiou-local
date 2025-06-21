@@ -23,16 +23,17 @@ bar_x_right = 370  # バーのx座標右
 save_path = "received_images"
 os.makedirs(save_path, exist_ok=True)
 
-status = "start"
-name = "none"
-count = 0
-hand_flg = 1
+
 
 
 async def handler(websocket, model, face_features_path):
-    global status, name, count, hand_flg
+    status = "start"
+    name = "none"
+    count = 0
+    hand_flg = 1
 
     async for message in websocket:
+        
         # Base64デコードしてバイナリデータを取得
         image_data = base64.b64decode(message)
 
