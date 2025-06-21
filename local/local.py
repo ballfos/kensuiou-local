@@ -38,7 +38,7 @@ img6 = pygame.transform.scale(img6, (500, 500))
 img6 = pygame.transform.flip(img6, True, False)
 
 async def send_images():
-    async with websockets.connect("ws://localhost:8765") as websocket:
+    async with websockets.connect("ws://192.168.100.101:8765") as websocket:
         entry_flg = True  # エントリー音を鳴らすフラグ
         previous_count = 0  # 前回のカウントを保持する変数
         sound_entry.play()
