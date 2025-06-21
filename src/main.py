@@ -1,4 +1,5 @@
 import subprocess
+import pygame
 
 def main():
     print("待機中...")
@@ -8,6 +9,8 @@ def main():
             execute_local_script()
     except KeyboardInterrupt:
         print("exit")
+
+        
 def execute_local_script():
     """local.pyを実行"""
     try:
