@@ -18,5 +18,5 @@ captured_images
 .env
 received_images
 face_features.json
-coin.mp3
 models/
+assets/
