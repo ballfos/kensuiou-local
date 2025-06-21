@@ -28,7 +28,8 @@ os.makedirs(save_path, exist_ok=True)
 
 async def handler(websocket, model, face_features_path):
     status = "start"
-    name = "none"
+    name = None
+    nickname = None
     count = 0
     hand_flg = 1
 
@@ -47,7 +48,7 @@ async def handler(websocket, model, face_features_path):
 
         if status == "start":
             name = identify_person(file_path, face_features_path)
-            if name != "none":
+            if name is not None:
                 status = "Authenticated"
                 nickname = get_nickname(name)
                 print(f"Identified: {nickname}")
@@ -96,8 +97,8 @@ async def handler(websocket, model, face_features_path):
             print("wide=", wide)
             # 状態をリセット
             status = "start"
-            name = "none"
-            nickname = "none"
+            name = None
+            nickname = None
             count = 0
             hand_flg = 1
 

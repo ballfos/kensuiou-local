@@ -18,7 +18,7 @@ def identify_person(image_path, face_features_path, threshold=0.6):
     face_encodings = face_recognition.face_encodings(image)
 
     if len(face_encodings) == 0:
-        return "none"
+        return None
 
     # 入力画像に含まれる最初の顔で判定
     input_encoding = face_encodings[0]
@@ -31,7 +31,7 @@ def identify_person(image_path, face_features_path, threshold=0.6):
     if distances[best_match_index] <= threshold:
         return known_names[best_match_index]
     else:
-        return "none"
+        return None
 
 
 def detect_objects_and_get_centers(model, image_path):
