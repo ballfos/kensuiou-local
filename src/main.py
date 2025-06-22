@@ -17,6 +17,7 @@ pygame.mouse.set_visible(False)
 screen = pygame.display.set_mode((1920, 1080), pygame.RESIZABLE)
 pygame.display.set_caption("kensuiou")
 font = pygame.font.Font("assets/fonts/ZenMaruGothic-Medium.ttf", 100)
+font_large = pygame.font.Font("assets/fonts/ZenMaruGothic-Medium.ttf", 300)
 text_color = (255, 255, 255)  # 白色
 background_color = (0, 0, 0)  # 黒色
 sound_entry = pygame.mixer.Sound("assets/sounds/entry.wav")
@@ -43,10 +44,11 @@ async def send_images():
         entry_flg = True  # エントリー音を鳴らすフラグ
         previous_count = 0  # 前回のカウントを保持する変数
         sound_entry.play()
-
+        cap = cv2.VideoCapture(0)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 960)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         while True :
             #　カメラから画像を撮りサーバーに送り続ける
-            cap = cv2.VideoCapture(0)
             ret, frame = cap.read()
             if not ret:
                 print("Failed to capture image")
@@ -88,17 +90,17 @@ async def send_images():
                     sound_count.play()
                 previous_count = count 
                 if count == 0:
-                    text = font.render(f"スタート！！！", True, text_color)
+                    text = font_large.render(f"スタート！！！", True, text_color)
                 else :
-                    text = font.render(f" {count}回！！", True, text_color)
+                    text = font_large.render(f" {count}回！！", True, text_color)
                     
 
                 if count<10:
-                    screen.blit(img3, (1200, 550))
+                    screen.blit(img3, (1300, 550))
                 else:
                     screen.blit(img4, (1100, 500))
 
-                screen.blit(text, (150, 150))
+                screen.blit(text, (200, 150))
                 pygame.display.flip()
                     
             if response_data.get("status") == "end":
@@ -120,10 +122,8 @@ async def send_images():
                 pygame.display.flip()
                 await asyncio.sleep(7)
                 screen.fill(background_color)
-                
-
+            
                 break
-            # 0.1秒待機
                 
         cap.release()   
 
