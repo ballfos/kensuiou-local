@@ -45,6 +45,8 @@ async def send_images():
         previous_count = 0  # 前回のカウントを保持する変数
         sound_entry.play()
         cap = cv2.VideoCapture(0)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 960)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         while True :
             #　カメラから画像を撮りサーバーに送り続ける
             ret, frame = cap.read()
