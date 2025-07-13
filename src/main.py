@@ -1,52 +1,54 @@
-import os
-import websockets
+import argparse
 import asyncio
 import base64
-import cv2
 import json
-import pygame
+import os
+
+import cv2
+import pygame as pg
+import websockets
 
 # 送信する画像が保存されているディレクトリ
 
-
-pygame.init()
-pygame.mixer.init()
-pygame.mouse.set_visible(False)
+pg.init()
+pg.mixer.init()
+pg.mouse.set_visible(False)
 
 # リサイズ可能なウィンドウを作成
-screen = pygame.display.set_mode((1920, 1080), pygame.RESIZABLE)
-pygame.display.set_caption("kensuiou")
-font = pygame.font.Font("assets/fonts/ZenMaruGothic-Medium.ttf", 100)
+screen = pg.display.set_mode((1920, 1080), pg.RESIZABLE)
+pg.display.set_caption("kensuiou")
+font_path = pg.font.match_font("Noto Sans CJK JP")
+fonts = {
+    100: pg.font.Font(font_path, 100),
+    150: pg.font.Font(font_path, 150),
+    200: pg.font.Font(font_path, 200),
+    250: pg.font.Font(font_path, 250),
+    300: pg.font.Font(font_path, 300),
+}
 text_color = (255, 255, 255)  # 白色
 background_color = (0, 0, 0)  # 黒色
-sound_entry = pygame.mixer.Sound("assets/sounds/entry.wav")
-sound_count = pygame.mixer.Sound("assets/sounds/coin.mp3")
-img1 = pygame.image.load("assets/aquatan/IMG_4887.png")
-img1 = pygame.transform.scale(img1, (500, 500)) 
-img1 = pygame.transform.flip(img1, True, False) 
-img2 = pygame.image.load("assets/aquatan/IMG_4889.png")
-img2 = pygame.transform.scale(img2, (500, 500)) 
-img3 = pygame.image.load("assets/aquatan/IMG_4892.png")
-img3 = pygame.transform.scale(img3, (500, 500)) 
-img4 = pygame.image.load("assets/aquatan/IMG_4886.png")
-img4 = pygame.transform.scale(img4, (600, 600)) 
-img4 = pygame.transform.flip(img4, True, False) 
-img5 = pygame.image.load("assets/aquatan/IMG_4888.png")
-img5 = pygame.transform.scale(img5, (500, 500))
-img5 = pygame.transform.flip(img5, True, False)
-img6 = pygame.image.load("assets/aquatan/IMG_4891.png")
-img6 = pygame.transform.scale(img6, (500, 500))
-img6 = pygame.transform.flip(img6, True, False)
+sounds = {
+    "entry": pg.mixer.Sound("assets/sounds/entry.wav"),
+    "count": pg.mixer.Sound("assets/sounds/coin.mp3"),
+}
+images = {
+    "auth": pg.image.load("assets/images/IMG_4887.png"),
+    "guide": pg.image.load("assets/images/IMG_4889.png"),
+    "ok": pg.image.load("assets/images/IMG_4886.png"),
+    "good": pg.image.load("assets/images/IMG_4888.png"),
+    "great": pg.image.load("assets/images/IMG_4891.png"),
+}
 
-async def send_images():
-    async with websockets.connect("ws://192.168.100.101:8765") as websocket:
+
+async def websocket_session(uri: str):
+    async with websockets.connect(uri) as websocket:
         entry_flg = True  # エントリー音を鳴らすフラグ
         previous_count = 0  # 前回のカウントを保持する変数
-        sound_entry.play()
+        sounds["entry"].play()
 
-        while True :
-            #　カメラから画像を撮りサーバーに送り続ける
-            cap = cv2.VideoCapture(0)
+        cap = cv2.VideoCapture(0)
+        while True:
+            # 　カメラから画像を撮りサーバーに送り続ける
             ret, frame = cap.read()
             if not ret:
                 print("Failed to capture image")
@@ -61,113 +63,121 @@ async def send_images():
 
             screen.fill(background_color)
 
-
             if response_data.get("status") == "start":
-                text = font.render("顔認証中、、、、", True, text_color)
+                text = fonts[100].render("顔認証中、、、、", True, text_color)
                 screen.blit(text, (150, 150))
-                screen.blit(img1, (1100, 500))
-                pygame.display.flip()
+                screen.blit(images["auth"], (1100, 500))
+                pg.display.flip()
 
             elif response_data.get("status") == "Authenticated":
 
                 if entry_flg:
-                    sound_entry.play()
+                    sounds["entry"].play()
                     entry_flg = False
                 name = response_data.get("name")
-                text = font.render(f"{name}さん、こんにちは！", True, text_color)
+                text = fonts[100].render(f"{name}さん、こんにちは！", True, text_color)
                 screen.blit(text, (150, 150))
-                text = font.render(f"バーを持ってね〜！", True, text_color)
+                text = fonts[150].render(f"バーを持ってね〜！", True, text_color)
                 screen.blit(text, (150, 400))
-                screen.blit(img2, (1100, 500))
-                pygame.display.flip()
+                screen.blit(images["guide"], (1100, 500))
+                pg.display.flip()
 
             elif response_data.get("status") == "Counting":
                 name = response_data.get("name")
                 count = response_data.get("count")
                 if previous_count != count:
-                    sound_count.play()
-                previous_count = count 
+                    sounds["count"].play()
+                previous_count = count
                 if count == 0:
-                    text = font.render(f"スタート！！！", True, text_color)
-                else :
-                    text = font.render(f" {count}回！！", True, text_color)
-                    
-
-                if count<10:
-                    screen.blit(img3, (1200, 550))
+                    text = fonts[100].render(f"スタート！！！", True, text_color)
                 else:
-                    screen.blit(img4, (1100, 500))
+                    text = fonts[250].render(f" {count}回！！", True, text_color)
+
+                if count < 5:
+                    screen.blit(images["ok"], (1200, 550))
+                elif count < 10:
+                    screen.blit(images["good"], (1100, 500))
+                else:
+                    screen.blit(images["great"], (1100, 500))
 
                 screen.blit(text, (150, 150))
-                pygame.display.flip()
-                    
+                pg.display.flip()
+
             if response_data.get("status") == "end":
                 name = response_data.get("name")
                 count = response_data.get("count")
-                text = font.render(f"結果", True, text_color)
+                text = fonts[100].render(f"結果", True, text_color)
                 screen.blit(text, (150, 150))
-                text = font.render(f"{name}さん、{count}回！！", True, text_color)
+                text = fonts[150].render(f"{name}さん、{count}回！！", True, text_color)
                 screen.blit(text, (150, 400))
                 if count < 5:
-                    screen.blit(img5, (1200, 550))
+                    screen.blit(images["ok"], (1200, 550))
                 elif count < 10:
-                    screen.blit(img6, (1100, 500))
+                    screen.blit(images["good"], (1100, 500))
                 else:
-                    screen.blit(img4, (1100, 500))
-               
-                print(f"name: {response_data.get('name')}, Count: {response_data.get('count')}")
+                    screen.blit(images["great"], (1100, 500))
+
+                print(
+                    f"name: {response_data.get('name')}, Count: {response_data.get('count')}"
+                )
                 # 7秒後に終了
-                pygame.display.flip()
+                pg.display.flip()
                 await asyncio.sleep(7)
                 screen.fill(background_color)
-                
 
                 break
             # 0.1秒待機
-                
-        cap.release()   
+            await asyncio.sleep(0.1)
+
+        cap.release()
 
 
-
-def main():
-    pygame.display.flip()
+def main(args):
+    pg.display.flip()
     try:
-        while True:
+        running = True
+        while running:
 
-            text = font.render("待機中...", True, text_color)
+            text = fonts[100].render("待機中...", True, text_color)
             screen.blit(text, (150, 150))
-            text = font.render(f"Enterでスタート！！", True, text_color)
+            text = fonts[100].render(f"Enterでスタート！！", True, text_color)
             screen.blit(text, (150, 400))
-            pygame.display.flip()
+            pg.display.flip()
 
             # 入力をリセット
-            for event in pygame.event.get():
+            for event in pg.event.get():
                 pass
-            
-            running = True
-            while running:
-                for event in pygame.event.get():
-                    if event.type == pygame.QUIT:  # ウィンドウの閉じるボタン
+
+            waiting = True
+            while waiting:
+                for event in pg.event.get():
+                    if event.type == pg.QUIT:  # ウィンドウの閉じるボタン
                         running = False
+                        waiting = False
 
                     # キーが押されたとき
-                    if event.type == pygame.KEYDOWN:
-                        if event.key == pygame.K_RETURN:  # Enterキー
-                            running = False
-                            print("Enterキーが押されました！")
+                    if event.type == pg.KEYDOWN:
+                        if event.key == pg.K_RETURN:  # Enterキー
+                            waiting = False
+                            break
+            if not running:
+                break
             print("スタート")
-            asyncio.run(send_images())
+            asyncio.run(websocket_session(args.uri))
             print("再起動中...")
-            pygame.display.flip()
+            pg.display.flip()
 
     except KeyboardInterrupt:
         print("exit")
 
     print("終了します")
-    pygame.quit()
+    pg.quit()
+
 
 if __name__ == "__main__":
-    main()
-    
-
-    
+    parser = argparse.ArgumentParser(description="WebSocket Client for Kensuiou")
+    parser.add_argument(
+        "--uri", type=str, default="ws://localhost:8765", help="WebSocket URI"
+    )
+    args = parser.parse_args()
+    main(args)
