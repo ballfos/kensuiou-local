@@ -43,6 +43,7 @@ pg.init()
 pg.mixer.init()
 
 # リサイズ可能なウィンドウを作成
+
 screen = pg.display.set_mode(SCREEN_SIZE, pg.RESIZABLE)
 pg.display.set_caption("kensuiou")
 font_path = pg.font.match_font("Noto Sans CJK JP")
@@ -74,7 +75,7 @@ async def websocket_session(queue: asyncio.Queue[ServerResponse], uri: str):
     async with websockets.connect(uri) as websocket:
         cap = cv2.VideoCapture(0)
         while True:
-            # カメラから画像を撮りサーバーに送り続ける
+
             ret, frame = cap.read()
             if not ret:
                 print("Failed to capture image")
@@ -84,6 +85,7 @@ async def websocket_session(queue: asyncio.Queue[ServerResponse], uri: str):
             _, buffer = cv2.imencode(".jpg", frame)
             encoded_image = base64.b64encode(buffer).decode("utf-8")
             await websocket.send(encoded_image)
+
             response = ServerResponse.from_json(await websocket.recv())
             print(f"Received: {response}")
             queue.put_nowait(response)
