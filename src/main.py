@@ -3,16 +3,39 @@ import asyncio
 import base64
 import json
 import os
+from dataclasses import dataclass
+from enum import Enum
 
 import cv2
 import pygame as pg
 import websockets
 
-# 送信する画像が保存されているディレクトリ
+
+class ServerStatus(Enum):
+    START = "start"
+    AUTHENTICATED = "Authenticated"
+    COUNTING = "Counting"
+    END = "end"
+
+
+@dataclass
+class ServerResponse:
+    status: ServerStatus
+    name: str
+    count: int
+
+    @classmethod
+    def from_json(cls, json_data: str):
+        data = json.loads(json_data)
+        return cls(
+            status=ServerStatus(data["status"]),
+            name=data.get("name", "Unknown"),
+            count=data.get("count", 0),
+        )
+
 
 pg.init()
 pg.mixer.init()
-pg.mouse.set_visible(False)
 
 # リサイズ可能なウィンドウを作成
 screen = pg.display.set_mode((1920, 1080), pg.RESIZABLE)
@@ -40,15 +63,11 @@ images = {
 }
 
 
-async def websocket_session(uri: str):
+async def websocket_session(queue: asyncio.Queue[ServerResponse], uri: str):
     async with websockets.connect(uri) as websocket:
-        entry_flg = True  # エントリー音を鳴らすフラグ
-        previous_count = 0  # 前回のカウントを保持する変数
-        sounds["entry"].play()
-
         cap = cv2.VideoCapture(0)
         while True:
-            # 　カメラから画像を撮りサーバーに送り続ける
+            # カメラから画像を撮りサーバーに送り続ける
             ret, frame = cap.read()
             if not ret:
                 print("Failed to capture image")
@@ -58,23 +77,93 @@ async def websocket_session(uri: str):
             _, buffer = cv2.imencode(".jpg", frame)
             encoded_image = base64.b64encode(buffer).decode("utf-8")
             await websocket.send(encoded_image)
-            response = await websocket.recv()
-            response_data = json.loads(response)
+            response = ServerResponse.from_json(await websocket.recv())
+            print(f"Received: {response}")
+            queue.put_nowait(response)
+            if response.status == ServerStatus.END:
+                break
+            # 0.2秒待機
+            await asyncio.sleep(0.2)
 
-            screen.fill(background_color)
+        cap.release()
 
-            if response_data.get("status") == "start":
+
+class GamePhase(Enum):
+    WAITING = "waiting"
+    RUNNING = "running"
+    RESULT = "result"
+
+
+async def main(args):
+    phase = GamePhase.WAITING
+    last_response = None
+    running = True
+    queue = asyncio.Queue()
+
+    websocket_task = None
+    while running:
+        # イベント処理
+        for event in pg.event.get():
+            if event.type == pg.QUIT:
+                running = False
+            elif event.type == pg.KEYDOWN:
+                if event.key == pg.K_ESCAPE:
+                    running = False
+                elif event.key == pg.K_RETURN:
+                    if phase == GamePhase.WAITING:
+                        phase = GamePhase.RUNNING
+                        websocket_task = asyncio.create_task(
+                            websocket_session(queue, args.uri)
+                        )
+                        print("ゲーム開始")
+                    elif phase == GamePhase.RESULT:
+                        phase = GamePhase.WAITING
+                        last_response = None
+                        print("ゲームをリセット")
+
+        # queueからのメッセージを処理
+        try:
+            response = queue.get_nowait()
+            # レスポンスが存在し、前回のレスポンスと異なる場合に処理
+            if response and (last_response is None or response != last_response):
+                if response.status == ServerStatus.START:
+                    print("サーバーからのスタートメッセージを受信")
+                    sounds["entry"].play()
+                elif response.status == ServerStatus.AUTHENTICATED:
+                    print(f"認証成功: {response.name}")
+                    sounds["entry"].play()
+                elif response.status == ServerStatus.COUNTING:
+                    print(f"カウント中: {response.name}, カウント: {response.count}")
+                    if response.count != last_response.count if last_response else None:
+                        sounds["count"].play()
+                elif response.status == ServerStatus.END:
+                    print(f"ゲーム終了: {response.name}, カウント: {response.count}")
+                last_response = response
+        except asyncio.QueueEmpty:
+            pass
+
+        screen.fill(background_color)
+        if phase == GamePhase.WAITING:
+            text = fonts[100].render("待機中...", True, text_color)
+            screen.blit(text, (150, 150))
+            text = fonts[100].render(f"Enterでスタート！！", True, text_color)
+            screen.blit(text, (150, 400))
+            pg.display.flip()
+        elif phase == GamePhase.RUNNING:
+            if last_response is None:
+                text = fonts[100].render("カメラを起動中...", True, text_color)
+                screen.blit(text, (150, 150))
+                pg.display.flip()
+                await asyncio.sleep(0.2)
+                continue
+            if last_response.status == ServerStatus.START:
                 text = fonts[100].render("顔認証中、、、、", True, text_color)
                 screen.blit(text, (150, 150))
                 screen.blit(images["auth"], (1100, 500))
                 pg.display.flip()
 
-            elif response_data.get("status") == "Authenticated":
-
-                if entry_flg:
-                    sounds["entry"].play()
-                    entry_flg = False
-                name = response_data.get("name")
+            elif last_response.status == ServerStatus.AUTHENTICATED:
+                name = last_response.name
                 text = fonts[100].render(f"{name}さん、こんにちは！", True, text_color)
                 screen.blit(text, (150, 150))
                 text = fonts[150].render(f"バーを持ってね〜！", True, text_color)
@@ -82,12 +171,9 @@ async def websocket_session(uri: str):
                 screen.blit(images["guide"], (1100, 500))
                 pg.display.flip()
 
-            elif response_data.get("status") == "Counting":
-                name = response_data.get("name")
-                count = response_data.get("count")
-                if previous_count != count:
-                    sounds["count"].play()
-                previous_count = count
+            elif last_response.status == ServerStatus.COUNTING:
+                name = last_response.name
+                count = last_response.count
                 if count == 0:
                     text = fonts[100].render(f"スタート！！！", True, text_color)
                 else:
@@ -103,74 +189,33 @@ async def websocket_session(uri: str):
                 screen.blit(text, (150, 150))
                 pg.display.flip()
 
-            if response_data.get("status") == "end":
-                name = response_data.get("name")
-                count = response_data.get("count")
-                text = fonts[100].render(f"結果", True, text_color)
-                screen.blit(text, (150, 150))
-                text = fonts[150].render(f"{name}さん、{count}回！！", True, text_color)
-                screen.blit(text, (150, 400))
-                if count < 5:
-                    screen.blit(images["ok"], (1200, 550))
-                elif count < 10:
-                    screen.blit(images["good"], (1100, 500))
-                else:
-                    screen.blit(images["great"], (1100, 500))
+            if last_response.status == ServerStatus.END:
 
-                print(
-                    f"name: {response_data.get('name')}, Count: {response_data.get('count')}"
-                )
-                # 7秒後に終了
-                pg.display.flip()
-                await asyncio.sleep(7)
-                screen.fill(background_color)
+                phase = GamePhase.RESULT
+                print("ゲーム終了")
 
-                break
-            # 0.1秒待機
-            await asyncio.sleep(0.1)
-
-        cap.release()
-
-
-def main(args):
-    pg.display.flip()
-    try:
-        running = True
-        while running:
-
-            text = fonts[100].render("待機中...", True, text_color)
+        elif phase == GamePhase.RESULT:
+            name = last_response.name
+            count = last_response.count
+            text = fonts[100].render(f"結果", True, text_color)
             screen.blit(text, (150, 150))
-            text = fonts[100].render(f"Enterでスタート！！", True, text_color)
+            text = fonts[150].render(f"{name}さん、{count}回！！", True, text_color)
             screen.blit(text, (150, 400))
+            if count < 5:
+                screen.blit(images["ok"], (1200, 550))
+            elif count < 10:
+                screen.blit(images["good"], (1100, 500))
+            else:
+                screen.blit(images["great"], (1100, 500))
+
+            print(f"name: {last_response.name}, Count: {last_response.count}")
             pg.display.flip()
 
-            # 入力をリセット
-            for event in pg.event.get():
-                pass
-
-            waiting = True
-            while waiting:
-                for event in pg.event.get():
-                    if event.type == pg.QUIT:  # ウィンドウの閉じるボタン
-                        running = False
-                        waiting = False
-
-                    # キーが押されたとき
-                    if event.type == pg.KEYDOWN:
-                        if event.key == pg.K_RETURN:  # Enterキー
-                            waiting = False
-                            break
-            if not running:
-                break
-            print("スタート")
-            asyncio.run(websocket_session(args.uri))
-            print("再起動中...")
-            pg.display.flip()
-
-    except KeyboardInterrupt:
-        print("exit")
+        await asyncio.sleep(0.2)
 
     print("終了します")
+    if websocket_task:
+        websocket_task.cancel()
     pg.quit()
 
 
@@ -180,4 +225,4 @@ if __name__ == "__main__":
         "--uri", type=str, default="ws://localhost:8765", help="WebSocket URI"
     )
     args = parser.parse_args()
-    main(args)
+    asyncio.run(main(args))
