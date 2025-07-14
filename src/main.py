@@ -34,6 +34,9 @@ class ServerResponse:
         )
 
 
+TEXT_COLOR = (255, 255, 255)
+BACKGROUND_COLOR = (0, 0, 0)
+
 pg.init()
 pg.mixer.init()
 
@@ -48,8 +51,7 @@ fonts = {
     250: pg.font.Font(font_path, 250),
     300: pg.font.Font(font_path, 300),
 }
-text_color = (255, 255, 255)  # 白色
-background_color = (0, 0, 0)  # 黒色
+
 sounds = {
     "entry": pg.mixer.Sound("assets/sounds/entry.wav"),
     "count": pg.mixer.Sound("assets/sounds/coin.mp3"),
@@ -88,6 +90,18 @@ async def websocket_session(queue: asyncio.Queue[ServerResponse], uri: str):
         cap.release()
 
 
+def draw_text(
+    surface: pg.Surface,
+    text: str,
+    pos: tuple[int, int],
+    font: pg.font.Font,
+    color: tuple[int, int, int] = TEXT_COLOR,
+    background: tuple[int, int, int] = None,
+):
+    text_surface = font.render(text, True, color, background)
+    surface.blit(text_surface, pos)
+
+
 class GamePhase(Enum):
     WAITING = "waiting"
     RUNNING = "running"
@@ -121,7 +135,7 @@ async def main(args):
                         last_response = None
                         print("ゲームをリセット")
 
-        # queueからのメッセージを処理
+        # queueからのメッセージ処理
         try:
             response = queue.get_nowait()
             # レスポンスが存在し、前回のレスポンスと異なる場合に処理
@@ -142,42 +156,37 @@ async def main(args):
         except asyncio.QueueEmpty:
             pass
 
-        screen.fill(background_color)
+        # 描画処理
+        screen.fill(BACKGROUND_COLOR)
         if phase == GamePhase.WAITING:
-            text = fonts[100].render("待機中...", True, text_color)
-            screen.blit(text, (150, 150))
-            text = fonts[100].render(f"Enterでスタート！！", True, text_color)
-            screen.blit(text, (150, 400))
-            pg.display.flip()
+            draw_text(screen, "待機中...", (150, 150), fonts[100])
+            draw_text(screen, "Enterでスタート！！", (150, 400), fonts[100])
+
         elif phase == GamePhase.RUNNING:
             if last_response is None:
-                text = fonts[100].render("カメラを起動中...", True, text_color)
-                screen.blit(text, (150, 150))
-                pg.display.flip()
-                await asyncio.sleep(0.2)
-                continue
-            if last_response.status == ServerStatus.START:
-                text = fonts[100].render("顔認証中、、、、", True, text_color)
-                screen.blit(text, (150, 150))
+                draw_text(screen, "カメラを起動中...", (150, 150), fonts[100])
+
+            elif last_response.status == ServerStatus.START:
+                draw_text(screen, "顔認証中、、、、", (150, 150), fonts[100])
                 screen.blit(images["auth"], (1100, 500))
-                pg.display.flip()
 
             elif last_response.status == ServerStatus.AUTHENTICATED:
                 name = last_response.name
-                text = fonts[100].render(f"{name}さん、こんにちは！", True, text_color)
-                screen.blit(text, (150, 150))
-                text = fonts[150].render(f"バーを持ってね〜！", True, text_color)
-                screen.blit(text, (150, 400))
+                draw_text(screen, f"{name}さん、こんにちは！", (150, 150), fonts[100])
+                draw_text(screen, "バーを持ってね〜！", (150, 400), fonts[150])
                 screen.blit(images["guide"], (1100, 500))
-                pg.display.flip()
 
             elif last_response.status == ServerStatus.COUNTING:
                 name = last_response.name
                 count = last_response.count
                 if count == 0:
-                    text = fonts[100].render(f"スタート！！！", True, text_color)
+                    draw_text(
+                        screen, f"{name}さん、スタート！！！", (150, 150), fonts[100]
+                    )
                 else:
-                    text = fonts[250].render(f" {count}回！！", True, text_color)
+                    draw_text(
+                        screen, f"{name}さん、{count}回！！", (150, 150), fonts[100]
+                    )
 
                 if count < 5:
                     screen.blit(images["ok"], (1200, 550))
@@ -186,21 +195,15 @@ async def main(args):
                 else:
                     screen.blit(images["great"], (1100, 500))
 
-                screen.blit(text, (150, 150))
-                pg.display.flip()
-
-            if last_response.status == ServerStatus.END:
-
+            elif last_response.status == ServerStatus.END:
                 phase = GamePhase.RESULT
                 print("ゲーム終了")
 
         elif phase == GamePhase.RESULT:
             name = last_response.name
             count = last_response.count
-            text = fonts[100].render(f"結果", True, text_color)
-            screen.blit(text, (150, 150))
-            text = fonts[150].render(f"{name}さん、{count}回！！", True, text_color)
-            screen.blit(text, (150, 400))
+            draw_text(screen, f"結果", (150, 150), fonts[100])
+            draw_text(screen, f"{name}さん、{count}回！！", (150, 400), fonts[150])
             if count < 5:
                 screen.blit(images["ok"], (1200, 550))
             elif count < 10:
@@ -209,8 +212,8 @@ async def main(args):
                 screen.blit(images["great"], (1100, 500))
 
             print(f"name: {last_response.name}, Count: {last_response.count}")
-            pg.display.flip()
 
+        pg.display.flip()
         await asyncio.sleep(0.2)
 
     print("終了します")
