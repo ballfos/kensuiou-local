@@ -36,12 +36,13 @@ class ServerResponse:
 
 TEXT_COLOR = (255, 255, 255)
 BACKGROUND_COLOR = (0, 0, 0)
+SCREEN_SIZE = (1920, 1080)
 
 pg.init()
 pg.mixer.init()
 
 # リサイズ可能なウィンドウを作成
-screen = pg.display.set_mode((1920, 1080), pg.RESIZABLE)
+screen = pg.display.set_mode(SCREEN_SIZE, pg.RESIZABLE)
 pg.display.set_caption("kensuiou")
 font_path = pg.font.match_font("Noto Sans CJK JP")
 fonts = {
@@ -110,30 +111,41 @@ class GamePhase(Enum):
 
 async def main(args):
     phase = GamePhase.WAITING
+    result_countdown = 0
     last_response = None
-    running = True
     queue = asyncio.Queue()
-
     websocket_task = None
+
+    running = True
     while running:
         # イベント処理
         for event in pg.event.get():
+            # 共通
             if event.type == pg.QUIT:
                 running = False
+                break
             elif event.type == pg.KEYDOWN:
                 if event.key == pg.K_ESCAPE:
                     running = False
-                elif event.key == pg.K_RETURN:
-                    if phase == GamePhase.WAITING:
-                        phase = GamePhase.RUNNING
-                        websocket_task = asyncio.create_task(
-                            websocket_session(queue, args.uri)
-                        )
-                        print("ゲーム開始")
-                    elif phase == GamePhase.RESULT:
-                        phase = GamePhase.WAITING
-                        last_response = None
-                        print("ゲームをリセット")
+                    break
+
+            # 状態毎の処理
+            if phase == GamePhase.WAITING:
+                if event.type == pg.KEYDOWN and event.key == pg.K_RETURN:
+                    phase = GamePhase.RUNNING
+                    websocket_task = asyncio.create_task(
+                        websocket_session(queue, args.uri)
+                    )
+                    print("ゲーム開始")
+            elif phase == GamePhase.RUNNING:
+                if event.type == pg.KEYDOWN and event.key == pg.K_RETURN:
+                    # ここでは何もしない、ゲーム中はEnterキーでの操作は無視
+                    pass
+            elif phase == GamePhase.RESULT:
+                if event.type == pg.KEYDOWN and event.key == pg.K_RETURN:
+                    phase = GamePhase.WAITING
+                    last_response = None
+                    print("ゲームをリセット")
 
         # queueからのメッセージ処理
         try:
@@ -195,10 +207,6 @@ async def main(args):
                 else:
                     screen.blit(images["great"], (1100, 500))
 
-            elif last_response.status == ServerStatus.END:
-                phase = GamePhase.RESULT
-                print("ゲーム終了")
-
         elif phase == GamePhase.RESULT:
             name = last_response.name
             count = last_response.count
@@ -211,7 +219,26 @@ async def main(args):
             else:
                 screen.blit(images["great"], (1100, 500))
 
+            if result_countdown > 0:
+                draw_text(
+                    screen, f"{result_countdown / 1000:.1f}s", (150, 800), fonts[100]
+                )
+
             print(f"name: {last_response.name}, Count: {last_response.count}")
+
+        # 内部状態の処理
+        if phase == GamePhase.RUNNING:
+            if last_response and last_response.status == ServerStatus.END:
+                phase = GamePhase.RESULT
+                result_countdown = 7000
+
+        elif phase == GamePhase.RESULT:
+            if result_countdown > 0:
+                result_countdown -= 200
+            else:
+                phase = GamePhase.WAITING
+                last_response = None
+                print("ゲームをリセット")
 
         pg.display.flip()
         await asyncio.sleep(0.2)
