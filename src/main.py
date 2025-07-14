@@ -223,7 +223,7 @@ async def main(args):
                 draw_image(screen, images["setup"], left=0, bottom=SCREEN_SIZE[1])
 
             elif last_response.status == ServerStatus.START:
-                draw_text(screen, "顔認証中、、、、", (150, 150), fonts[100])
+                draw_text(screen, "顔認証中...", (150, 150), fonts[100])
                 draw_image(screen, images["setup"], left=0, bottom=SCREEN_SIZE[1])
 
             elif last_response.status == ServerStatus.RECOGNIZED:
