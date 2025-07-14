@@ -2,7 +2,6 @@ import argparse
 import asyncio
 import base64
 import json
-import os
 from dataclasses import dataclass
 from enum import Enum
 
@@ -13,7 +12,7 @@ import websockets
 
 class ServerStatus(Enum):
     START = "start"
-    AUTHENTICATED = "Authenticated"
+    RECOGNIZED = "Authenticated"
     COUNTING = "Counting"
     END = "end"
 
@@ -37,6 +36,8 @@ class ServerResponse:
 TEXT_COLOR = (255, 255, 255)
 BACKGROUND_COLOR = (0, 0, 0)
 SCREEN_SIZE = (1920, 1080)
+RESULT_DURATION = 7000
+FPS = 5
 
 pg.init()
 pg.mixer.init()
@@ -58,12 +59,15 @@ sounds = {
     "count": pg.mixer.Sound("assets/sounds/coin.mp3"),
 }
 images = {
-    "auth": pg.image.load("assets/images/IMG_4887.png"),
-    "guide": pg.image.load("assets/images/IMG_4889.png"),
-    "ok": pg.image.load("assets/images/IMG_4886.png"),
-    "good": pg.image.load("assets/images/IMG_4888.png"),
-    "great": pg.image.load("assets/images/IMG_4891.png"),
+    "wait": pg.image.load("assets/images/wait.png"),
+    "setup": pg.image.load("assets/images/setup.png"),
+    "guide": pg.image.load("assets/images/guide.png"),
+    "ng": pg.image.load("assets/images/ng.png"),
+    "ok": pg.image.load("assets/images/ok.png"),
+    "good": pg.image.load("assets/images/good.png"),
+    "great": pg.image.load("assets/images/great.png"),
 }
+images = {key: pg.transform.scale(image, (720, 720)) for key, image in images.items()}
 
 
 async def websocket_session(queue: asyncio.Queue[ServerResponse], uri: str):
@@ -86,7 +90,7 @@ async def websocket_session(queue: asyncio.Queue[ServerResponse], uri: str):
             if response.status == ServerStatus.END:
                 break
             # 0.2秒待機
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(1 / FPS)
 
         cap.release()
 
@@ -101,6 +105,42 @@ def draw_text(
 ):
     text_surface = font.render(text, True, color, background)
     surface.blit(text_surface, pos)
+
+
+def draw_image(
+    surface: pg.Surface,
+    image: pg.Surface,
+    left: int = None,
+    top: int = None,
+    right: int = None,
+    bottom: int = None,
+):
+    if top is not None and left is not None:
+        print("top and left")
+        surface.blit(image, (left, top))
+    elif top is not None and right is not None:
+        print("top and right")
+        rect = image.get_rect(topright=(right, top))
+        surface.blit(image, rect.topleft)
+    elif bottom is not None and left is not None:
+        print("bottom and left")
+        rect = image.get_rect(bottomleft=(left, bottom))
+        surface.blit(image, rect.topleft)
+    elif bottom is not None and right is not None:
+        print("bottom and right")
+        rect = image.get_rect(bottomright=(right, bottom))
+        surface.blit(image, rect.topleft)
+
+
+def draw_progress(
+    surface: pg.Surface,
+    progress: float,
+):
+    pg.draw.rect(
+        surface,
+        (200, 230, 210),
+        (0, 0, SCREEN_SIZE[0] * progress, 50),
+    )
 
 
 class GamePhase(Enum):
@@ -155,7 +195,7 @@ async def main(args):
                 if response.status == ServerStatus.START:
                     print("サーバーからのスタートメッセージを受信")
                     sounds["entry"].play()
-                elif response.status == ServerStatus.AUTHENTICATED:
+                elif response.status == ServerStatus.RECOGNIZED:
                     print(f"認証成功: {response.name}")
                     sounds["entry"].play()
                 elif response.status == ServerStatus.COUNTING:
@@ -173,20 +213,24 @@ async def main(args):
         if phase == GamePhase.WAITING:
             draw_text(screen, "待機中...", (150, 150), fonts[100])
             draw_text(screen, "Enterでスタート！！", (150, 400), fonts[100])
+            draw_image(screen, images["wait"], left=0, bottom=SCREEN_SIZE[1])
 
         elif phase == GamePhase.RUNNING:
             if last_response is None:
                 draw_text(screen, "カメラを起動中...", (150, 150), fonts[100])
+                draw_image(screen, images["setup"], left=0, bottom=SCREEN_SIZE[1])
 
             elif last_response.status == ServerStatus.START:
                 draw_text(screen, "顔認証中、、、、", (150, 150), fonts[100])
-                screen.blit(images["auth"], (1100, 500))
+                draw_image(screen, images["setup"], left=0, bottom=SCREEN_SIZE[1])
 
-            elif last_response.status == ServerStatus.AUTHENTICATED:
+            elif last_response.status == ServerStatus.RECOGNIZED:
                 name = last_response.name
                 draw_text(screen, f"{name}さん、こんにちは！", (150, 150), fonts[100])
                 draw_text(screen, "バーを持ってね〜！", (150, 400), fonts[150])
-                screen.blit(images["guide"], (1100, 500))
+                draw_image(
+                    screen, images["guide"], right=SCREEN_SIZE[0], bottom=SCREEN_SIZE[1]
+                )
 
             elif last_response.status == ServerStatus.COUNTING:
                 name = last_response.name
@@ -201,11 +245,33 @@ async def main(args):
                     )
 
                 if count < 5:
-                    screen.blit(images["ok"], (1200, 550))
+                    draw_image(
+                        screen,
+                        images["ng"],
+                        right=SCREEN_SIZE[0],
+                        bottom=SCREEN_SIZE[1],
+                    )
                 elif count < 10:
-                    screen.blit(images["good"], (1100, 500))
+                    draw_image(
+                        screen,
+                        images["ok"],
+                        right=SCREEN_SIZE[0],
+                        bottom=SCREEN_SIZE[1],
+                    )
+                elif count < 20:
+                    draw_image(
+                        screen,
+                        images["good"],
+                        right=SCREEN_SIZE[0],
+                        bottom=SCREEN_SIZE[1],
+                    )
                 else:
-                    screen.blit(images["great"], (1100, 500))
+                    draw_image(
+                        screen,
+                        images["great"],
+                        right=SCREEN_SIZE[0],
+                        bottom=SCREEN_SIZE[1],
+                    )
 
         elif phase == GamePhase.RESULT:
             name = last_response.name
@@ -213,15 +279,26 @@ async def main(args):
             draw_text(screen, f"結果", (150, 150), fonts[100])
             draw_text(screen, f"{name}さん、{count}回！！", (150, 400), fonts[150])
             if count < 5:
-                screen.blit(images["ok"], (1200, 550))
+                draw_image(
+                    screen, images["ng"], right=SCREEN_SIZE[0], bottom=SCREEN_SIZE[1]
+                )
             elif count < 10:
-                screen.blit(images["good"], (1100, 500))
+                draw_image(
+                    screen, images["ok"], right=SCREEN_SIZE[0], bottom=SCREEN_SIZE[1]
+                )
+            elif count < 20:
+                draw_image(
+                    screen, images["good"], right=SCREEN_SIZE[0], bottom=SCREEN_SIZE[1]
+                )
             else:
-                screen.blit(images["great"], (1100, 500))
+                draw_image(
+                    screen, images["great"], right=SCREEN_SIZE[0], bottom=SCREEN_SIZE[1]
+                )
 
             if result_countdown > 0:
-                draw_text(
-                    screen, f"{result_countdown / 1000:.1f}s", (150, 800), fonts[100]
+                draw_progress(
+                    screen,
+                    result_countdown / RESULT_DURATION,
                 )
 
             print(f"name: {last_response.name}, Count: {last_response.count}")
@@ -230,18 +307,18 @@ async def main(args):
         if phase == GamePhase.RUNNING:
             if last_response and last_response.status == ServerStatus.END:
                 phase = GamePhase.RESULT
-                result_countdown = 7000
+                result_countdown = RESULT_DURATION
 
         elif phase == GamePhase.RESULT:
             if result_countdown > 0:
-                result_countdown -= 200
+                result_countdown -= 1000 / FPS
             else:
                 phase = GamePhase.WAITING
                 last_response = None
                 print("ゲームをリセット")
 
         pg.display.flip()
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(1 / FPS)
 
     print("終了します")
     if websocket_task:
