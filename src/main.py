@@ -87,7 +87,6 @@ async def websocket_session(queue: asyncio.Queue[ServerResponse], uri: str):
             await websocket.send(encoded_image)
 
             response = ServerResponse.from_json(await websocket.recv())
-            print(f"Received: {response}")
             queue.put_nowait(response)
             if response.status == ServerStatus.END:
                 break
@@ -118,18 +117,14 @@ def draw_image(
     bottom: int = None,
 ):
     if top is not None and left is not None:
-        print("top and left")
         surface.blit(image, (left, top))
     elif top is not None and right is not None:
-        print("top and right")
         rect = image.get_rect(topright=(right, top))
         surface.blit(image, rect.topleft)
     elif bottom is not None and left is not None:
-        print("bottom and left")
         rect = image.get_rect(bottomleft=(left, bottom))
         surface.blit(image, rect.topleft)
     elif bottom is not None and right is not None:
-        print("bottom and right")
         rect = image.get_rect(bottomright=(right, bottom))
         surface.blit(image, rect.topleft)
 
@@ -322,7 +317,6 @@ async def main(args):
         pg.display.flip()
         await asyncio.sleep(1 / FPS)
 
-    print("終了します")
     if websocket_task:
         websocket_task.cancel()
     pg.quit()
