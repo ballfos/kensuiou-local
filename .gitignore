@@ -10,13 +10,6 @@ wheels/
 .venv
 
 # Custom
-test_images
-sample
-face_images
-*_test
-captured_images
 .env
-received_images
-face_features.json
-models/
-assets/
+
+assets
