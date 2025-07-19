@@ -1,7 +1,5 @@
 import cv2
 
-import cv2
-
 def detect_qr_code_coordinates(image_path):
     # 画像読み込み
     image = cv2.imread(image_path)
@@ -23,9 +21,6 @@ def detect_qr_code_coordinates(image_path):
         cx = int(sum(x for x, _ in coordinates) / 4)
         top_y = min(y for _, y in coordinates)
 
-        print(f"QRコード内容: {data}")
-        print(f"四隅の座標: {coordinates}")
-        print(f"中心X, 上部Y: ({cx}, {top_y})")
         return cx, top_y
     else:
         print("QRコードが検出されませんでした。")
