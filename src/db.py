@@ -1,7 +1,6 @@
-import json
 import os
 
-import psycopg2
+import psycopg
 from dotenv import load_dotenv
 
 # .envファイルをロード
@@ -13,15 +12,9 @@ DBNAME = os.getenv("POSTGRES_DATABASE")
 PORT = os.getenv("POSTGRES_PORT")
 
 # データベースとのコネクションを確立
-connection = psycopg2.connect(
+connection = psycopg.connect(
     f"host={HOST} user={USER} password={PASSWORD} dbname={DBNAME} port={PORT}"
 )
-
-# 環境変数からJSON文字列を取得
-student_ids_json = os.getenv("STUDENT_IDS")
-
-# JSON文字列を辞書型に変換
-student_ids = json.loads(student_ids_json)
 
 
 def register_record(name, count, wide):
@@ -29,9 +22,9 @@ def register_record(name, count, wide):
     # student_idsを利用してidをmembersテーブルから取得
     cursor.execute(
         """
-        SELECT id FROM members WHERE student_id = %s
+        SELECT id FROM members WHERE face_name = %s
     """,
-        (student_ids.get(name),),
+        (name,),
     )
     result = cursor.fetchone()
     id = result[0] if result else None
@@ -51,9 +44,9 @@ def get_nickname(name):
     cursor = connection.cursor()
     cursor.execute(
         """
-        SELECT nickname FROM members WHERE student_id = %s
+        SELECT nickname FROM members WHERE face_name = %s
     """,
-        (student_ids.get(name),),
+        (name,),
     )
     result = cursor.fetchone()
     cursor.close()

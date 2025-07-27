@@ -10,6 +10,7 @@ import numpy as np
 import pygame as pg
 
 import capture
+import db
 import face
 import pose
 
@@ -94,7 +95,9 @@ class State:
 
     def reset(self):
         self.count: int = 0
+        self.wide: bool = False
         self.name: Optional[str] = None
+        self.nickname: Optional[str] = None
         self.chinuped: bool = False
         self.timers = {
             "recognizing": Config.RECOGNIZING_TIMEOUT_MS,
@@ -124,6 +127,12 @@ class Phase:
         self.screen = game.screen
         self.debug = game.debug
 
+    def enter(self):
+        pass
+
+    def exit(self):
+        pass
+
     def handle_event(self, event: pg.event.Event) -> Optional["Phase"]:
         return None
 
@@ -148,9 +157,6 @@ class Phase:
         if not self.debug:
             return
         frame = capture.read_rgb()
-        if frame is None:
-            return
-
         pose_result = pose.detect_pose(frame)
 
         # ランドマークを描画
@@ -167,6 +173,18 @@ class Phase:
                 center = (int(x * frame.shape[1]), int(y * frame.shape[0]))
                 cv2.circle(frame, center, 10, color, -1)
 
+        # BAR_Y_COORDINATEを描画
+        bar_y = int(Config.BAR_Y_COORDINATE * frame.shape[0])
+        threshold_bar_y = int(bar_y + Config.CHINUP_RESET_THRESHOLD * frame.shape[0])
+        cv2.line(frame, (0, bar_y), (frame.shape[1], bar_y), (255, 255, 0), 2)
+        cv2.line(
+            frame,
+            (0, threshold_bar_y),
+            (frame.shape[1], threshold_bar_y),
+            (255, 0, 0),
+            2,
+        )
+
         # Pygame用に変換して描画
         frame = np.rot90(frame)
         surface = pg.surfarray.make_surface(frame)
@@ -182,6 +200,10 @@ class IdlePhase(Phase):
             return RecognizingPhase(self.game)
         return None
 
+    def enter(self):
+        self.state.reset()
+        capture.release()
+
     def draw(self):
         self._draw_text("待機中...", (150, 150), 100)
         self._draw_text("Enterでスタート！！", (150, 400), 100)
@@ -196,13 +218,12 @@ class RecognizingPhase(Phase):
             return IdlePhase(self.game)
 
         frame = capture.read_rgb()
-        if frame is None:
-            return self
 
         names = face.recognize_face_names(frame)
         if len(names) == 1:
             self.state.name = names[0]
             logger.info(f"Recognized: {self.state.name}")
+            self.state.nickname = db.get_nickname(self.state.name)
             self.assets.sounds["entry"].play()
             return WaitingHandsPhase(self.game)
         elif len(names) > 1:
@@ -259,8 +280,10 @@ class CountingPhase(Phase):
                 and pose_result.left_hand
                 and pose_result.right_hand
             )
-            or pose_result.left_hand[1] > Config.BAR_Y_COORDINATE
-            or pose_result.right_hand[1] > Config.BAR_Y_COORDINATE
+            or pose_result.left_hand[1]
+            > Config.BAR_Y_COORDINATE + Config.CHINUP_RESET_THRESHOLD
+            or pose_result.right_hand[1]
+            > Config.BAR_Y_COORDINATE + Config.CHINUP_RESET_THRESHOLD
         ):
             self.state.timers["counting"] -= dt
             if self.state.timers["counting"] <= 0:
@@ -287,7 +310,7 @@ class CountingPhase(Phase):
     def draw(self):
         self._draw_text("カウント中...", (150, 150), 100)
         self._draw_text(
-            f"{self.state.name}さん、{self.state.count}回！！", (150, 400), 150
+            f"{self.state.name}さん {self.state.count}回！！", (150, 400), 150
         )
         image = self.assets.get_rank_image(self.state.count)
         rect = image.get_rect(bottomright=Config.SCREEN_SIZE)
@@ -299,6 +322,9 @@ class ResultPhase(Phase):
     def __init__(self, game: "Game"):
         super().__init__(game)
         capture.release()
+
+    def enter(self):
+        db.register_record(self.state.name, self.state.count, self.state.wide)
 
     def handle_event(self, event: pg.event.Event):
         if event.type == pg.KEYDOWN and event.key == pg.K_RETURN:
@@ -316,7 +342,7 @@ class ResultPhase(Phase):
     def draw(self):
         self._draw_text("結果", (150, 150), 100)
         self._draw_text(
-            f"{self.state.name}さん、{self.state.count}回！！", (150, 400), 150
+            f"{self.state.name}さん {self.state.count}回！！", (150, 400), 150
         )
         image = self.assets.get_rank_image(self.state.count)
         rect = image.get_rect(bottomright=Config.SCREEN_SIZE)
@@ -363,15 +389,11 @@ class Game:
 
                 next_phase = self.current_phase.handle_event(event)
                 if next_phase:
-                    self.current_phase = next_phase
-                    if isinstance(self.current_phase, IdlePhase):
-                        self.state.reset()
+                    self._change_phase(next_phase)
 
             next_phase = self.current_phase.update(dt)
             if next_phase is not self.current_phase:
-                self.current_phase = next_phase
-                if isinstance(self.current_phase, IdlePhase):
-                    self.state.reset()
+                self._change_phase(next_phase)
 
             self.screen.fill(Config.BACKGROUND_COLOR)
             self.current_phase.draw()
@@ -380,6 +402,12 @@ class Game:
             pg.display.flip()
 
         self._cleanup()
+
+    def _change_phase(self, new_phase: Phase):
+        if new_phase and new_phase is not self.current_phase:
+            self.current_phase.exit()
+            self.current_phase = new_phase
+            self.current_phase.enter()
 
     def _draw_fps(self):
         font = self.assets.fonts[50]
