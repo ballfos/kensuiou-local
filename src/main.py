@@ -1,326 +1,507 @@
 import argparse
-import asyncio
-import base64
-import json
+import logging
 import os
-
-from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, auto
+from typing import Dict, Optional
 
 import cv2
 import dotenv
+import numpy as np
 import pygame as pg
-import torch
-# from db import get_nickname, register_record
-from predict import detect_objects_and_get_centers,identify_person
-from qr import detect_qr_code_coordinates
-os.environ['GLOG_minloglevel'] = '2'
-# 環境変数の読み込み
+
+import capture
+import chess
+import db
+import face
+import pose
+
+# ロガー設定
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+# 環境変数設定
 dotenv.load_dotenv()
-Y_RATIO = float(os.getenv("Y_RATIO", 0.5))
-X_RIGHT_RATIO = float(os.getenv("X_RIGHT_RATIO", 0.6))
-X_REFT_RATIO = float(os.getenv("X_REFT_RATIO", 0.4))
-
-# 画像保存ディレクトリ (一時的な画像保存用)
-SAVE_PATH = "temp_images"
-os.makedirs(SAVE_PATH, exist_ok=True)
+os.environ["GLOG_minloglevel"] = "2"
 
 
-class ServerStatus(Enum):
-    START = "start"
-    RECOGNIZED = "Authenticated"
-    COUNTING = "Counting"
-    END = "end"
+class Config:
+    """設定値を管理するクラス"""
+
+    SCREEN_SIZE = (1920, 1080)
+    FPS = 5
+    RESULT_DURATION_MS = 10000
+    RECOGNIZING_TIMEOUT_MS = 10000
+    COUNTING_TIMEOUT_MS = 2000
+
+    # Colors
+    TEXT_COLOR = (255, 255, 255)
+    BACKGROUND_COLOR = (0, 0, 0)
+    PROGRESS_BAR_COLOR = (200, 230, 210)
+    FPS_COUNTER_COLOR = (255, 255, 0)
+
+    # Pose estimation thresholds
+    CHINUP_RESET_THRESHOLD = 0.2
 
 
-@dataclass
-class ServerResponse:
-    status: ServerStatus
-    name: str
-    count: int
+class Assets:
+    """フォント、画像、サウンドなどのリソースを管理するクラス"""
+
+    def __init__(self):
+        pg.mixer.init()
+        font_path = pg.font.match_font("Noto Sans CJK JP")
+        self.fonts = {
+            size: pg.font.Font(font_path, size)
+            for size in [50, 100, 150, 200, 250, 300]
+        }
+        self.sounds = self._load_sounds()
+        self.images = self._load_images()
+
+    def _load_sounds(self) -> Dict[str, pg.mixer.Sound]:
+        return {
+            "entry": pg.mixer.Sound("assets/sounds/entry.wav"),
+            "count": pg.mixer.Sound("assets/sounds/coin.mp3"),
+        }
+
+    def _load_images(self) -> Dict[str, pg.Surface]:
+        image_files = {
+            "wait": "assets/images/wait.png",
+            "setup": "assets/images/setup.png",
+            "guide": "assets/images/guide.png",
+            "ng": "assets/images/ng.png",
+            "ok": "assets/images/ok.png",
+            "good": "assets/images/good.png",
+            "great": "assets/images/great.png",
+        }
+        images = {key: pg.image.load(path) for key, path in image_files.items()}
+        return {key: pg.transform.scale(img, (720, 720)) for key, img in images.items()}
+
+    def get_rank_image(self, count: int) -> pg.Surface:
+        if count >= 20:
+            return self.images["great"]
+        if count >= 10:
+            return self.images["good"]
+        if count >= 5:
+            return self.images["ok"]
+        return self.images["ng"]
 
 
-TEXT_COLOR = (255, 255, 255)
-BACKGROUND_COLOR = (0, 0, 0)
-SCREEN_SIZE = (1920, 1080)
-RESULT_DURATION = 7000
-FPS = 5
+class State:
+    """ゲームの状態を管理するデータクラス"""
 
-pg.init()
-pg.mixer.init()
-screen = pg.display.set_mode(SCREEN_SIZE, pg.RESIZABLE)
-pg.display.set_caption("kensuiou")
-font_path = pg.font.match_font("Noto Sans CJK JP")
-fonts = {
-    100: pg.font.Font(font_path, 100),
-    150: pg.font.Font(font_path, 150),
-    200: pg.font.Font(font_path, 200),
-    250: pg.font.Font(font_path, 250),
-    300: pg.font.Font(font_path, 300),
-}
-sounds = {
-    "entry": pg.mixer.Sound("assets/sounds/entry.wav"),
-    "count": pg.mixer.Sound("assets/sounds/coin.mp3"),
-}
-images = {
-    "wait": pg.image.load("assets/images/wait.png"),
-    "setup": pg.image.load("assets/images/setup.png"),
-    "guide": pg.image.load("assets/images/guide.png"),
-    "ng": pg.image.load("assets/images/ng.png"),
-    "ok": pg.image.load("assets/images/ok.png"),
-    "good": pg.image.load("assets/images/good.png"),
-    "great": pg.image.load("assets/images/great.png"),
-}
-images = {key: pg.transform.scale(image, (720, 720)) for key, image in images.items()}
+    def __init__(self):
+        self.reset()
+        self.chessboard_center: Optional[tuple[float, float]] = None
 
+    def reset(self):
+        self.count: int = 0
+        self.wide: bool = False
+        self.name: Optional[str] = None
+        self.nickname: Optional[str] = None
+        self.chinuped: bool = False
+        self.timers = {
+            "recognizing": Config.RECOGNIZING_TIMEOUT_MS,
+            "counting": Config.COUNTING_TIMEOUT_MS,
+            "result": Config.RESULT_DURATION_MS,
+        }
 
-async def local_game_logic(queue: asyncio.Queue,face_features_path):
-    """
-    カメラから映像を取得し、顔認証、物体検出、カウント処理をローカルで行う。
-    サーバーの`handler`関数のロジックを移植。
-    """
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        print("エラー: カメラを開けませんでした。")
-        return
+    def reset_timer(self, name: str):
+        self.timers[name] = getattr(Config, f"{name.upper()}_TIMEOUT_MS", 0)
 
-    # 状態変数の初期化
-    status = "start"
-    name = None
-    nickname = None
-    count = 0
-    hand_flg = 1
-    get_size_flg = True
-    bar_x_reft = 0
-    bar_y_coordinate = 0
-    wide = False
-
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("エラー: フレームをキャプチャできませんでした。")
-            break
-
-      
-        file_path = os.path.join(SAVE_PATH, "current_frame.jpg")
-        cv2.imwrite(file_path, frame)
-
-        # 初回フレームで座標の閾値を計算
-        if get_size_flg:
-            bar_y_coordinate, bar_x_reft = detect_qr_code_coordinates(file_path)
-            if bar_y_coordinate is None or bar_x_reft is None:
-                bar_y_coordinate = frame.shape[0] * Y_RATIO
-                bar_x_reft = frame.shape[1] * X_REFT_RATIO
-  
-            get_size_flg = False
-
-        # --- 状態ごとの処理 ---
-        if status == "start":
-            name = identify_person(file_path, face_features_path)
-            if name is not None:
-                status = "Authenticated"
-                nickname ="test man"    #get_nickname(name)
-                print(f"認証成功: {nickname}")
-
-        elif status == "Authenticated":
-            centers = detect_objects_and_get_centers(file_path)
-
-            # 両手が検出され、かつ初期位置より上にあるか
-            if centers["lefthand"] and centers["lefthand"]:
-                left_y = centers["lefthand"][1]
-                right_y = centers["righthand"][1]
-
-                if left_y <= bar_y_coordinate and right_y <= bar_y_coordinate:
-                    status = "Counting"
-
-                    # 手のx座標がバーの範囲外なら wide = True
-                    left_x = centers["lefthand"][0]
-                    right_x = centers["righthand"][0]
-
-                    if left_x <= bar_x_reft :
-                        wide = False
-                    else:
-                        wide = True
-
-                    print("カウント開始")
-
-        elif status == "Counting":
-            centers = detect_objects_and_get_centers(file_path)
-            
-            # 手が2つ検出されない、またはバーより下に手を下ろした場合、カウント終了
-            if (not centers["lefthand"] and not centers["lefthand"]) or (centers["lefthand"][1] > bar_y_coordinate and centers["righthand"][1] > bar_y_coordinate):
-                status = "end"
-                print("カウント終了条件")
-            
-            # 顔が検出された場合のみカウント処理
-            elif "face" in centers and len(centers["face"]) > 0:
-                if hand_flg == 1:                   
-                    # 頭がバーより上にきたらカウント
-                    if centers["face"][1] <= bar_y_coordinate:
-                        hand_flg = 0
-                        count += 1
-                        print(f"カウント: {count}")
-                
-                elif hand_flg == 0:
-                    # 一定以上頭を下げたら、次のカウントができるようにフラグを戻す
-                    if centers["face"][1] > bar_y_coordinate + 100:
-                        print("手を下げたのでカウント可能")
-                        hand_flg = 1
-
-        # レスポンスを生成してUIスレッドに送信
-        current_status = ServerStatus(status)
-        response = ServerResponse(status=current_status, name=nickname, count=count)
-        await queue.put(response)
-
-        # 終了状態ならループを抜ける
-        if status == "end":
-            print(f"最終結果 - Player: {nickname}, Count: {count}, Wide: {wide}")
-            break
-
-        await asyncio.sleep(1 / FPS)
-
-    cap.release()
-    print("カメラを解放しました。")
-
-
-def draw_text(surface, text, pos, font, color=TEXT_COLOR, background=None):
-    text_surface = font.render(text, True, color, background)
-    surface.blit(text_surface, pos)
-
-def draw_image(surface, image, left=None, top=None, right=None, bottom=None):
-    if top is not None and left is not None:
-        surface.blit(image, (left, top))
-    elif top is not None and right is not None:
-        rect = image.get_rect(topright=(right, top))
-        surface.blit(image, rect.topleft)
-    elif bottom is not None and left is not None:
-        rect = image.get_rect(bottomleft=(left, bottom))
-        surface.blit(image, rect.topleft)
-    elif bottom is not None and right is not None:
-        rect = image.get_rect(bottomright=(right, bottom))
-        surface.blit(image, rect.topleft)
-
-def draw_progress(surface, progress):
-    pg.draw.rect(surface, (200, 230, 210), (0, 0, SCREEN_SIZE[0] * progress, 50))
 
 class GamePhase(Enum):
-    WAITING = "waiting"
-    RUNNING = "running"
-    RESULT = "result"
+    INITIALIZING = auto()
+    IDLE = auto()
+    RECOGNIZING = auto()
+    WAITING_HANDS = auto()
+    COUNTING = auto()
+    RESULT = auto()
 
 
-async def main(args):
-    # モデルの読み込み
+class Phase:
+    """各ゲームフェーズの基底クラス"""
 
-    phase = GamePhase.WAITING
-    result_countdown = 0
-    last_response = None
-    queue = asyncio.Queue()
-    processing_task = None
+    def __init__(self, game: "Game"):
+        self.game = game
+        self.state = game.state
+        self.assets = game.assets
+        self.screen = game.screen
+        self.debug = game.debug
 
-    running = True
-    while running:
-        # イベント処理
-        for event in pg.event.get():
-            if event.type == pg.QUIT or (event.type == pg.KEYDOWN and event.key == pg.K_ESCAPE):
-                running = False
-                break
-            
-            if phase == GamePhase.WAITING:
-                if event.type == pg.KEYDOWN and event.key == pg.K_RETURN:
-                    phase = GamePhase.RUNNING
-                    processing_task = asyncio.create_task(
-                        local_game_logic(queue,  args.face_feature)
-                    )
-                    print("ゲーム開始")
-            elif phase == GamePhase.RESULT:
-                if event.type == pg.KEYDOWN and event.key == pg.K_RETURN:
-                    phase = GamePhase.WAITING
-                    last_response = None
-                    print("待機画面に戻ります。")
+        self.enter()
 
-        # キューからのメッセージ処理
-        try:
-            response = queue.get_nowait()
-            if response and (last_response is None or response != last_response):
-                if response.status != last_response.status if last_response else True:
-                     if response.status == ServerStatus.RECOGNIZED: sounds["entry"].play()
-                if response.status == ServerStatus.COUNTING and (response.count != last_response.count if last_response else False):
-                    sounds["count"].play()
+    def enter(self):
+        pass
 
-                last_response = response
-        except asyncio.QueueEmpty:
-            pass
+    def exit(self):
+        pass
 
-        # 描画処理
-        screen.fill(BACKGROUND_COLOR)
-        if phase == GamePhase.WAITING:
-            draw_text(screen, "待機中...", (150, 150), fonts[100])
-            draw_text(screen, "Enterでスタート！！", (150, 400), fonts[100])
-            draw_image(screen, images["wait"], left=0, bottom=SCREEN_SIZE[1])
+    def handle_event(self, event: pg.event.Event) -> Optional["Phase"]:
+        return None
 
-        elif phase == GamePhase.RUNNING:
-            if last_response is None:
-                draw_text(screen, "カメラを起動中...", (150, 150), fonts[100])
-                draw_image(screen, images["setup"], left=0, bottom=SCREEN_SIZE[1])
-            elif last_response.status == ServerStatus.START:
-                draw_text(screen, "顔認証中...", (150, 150), fonts[100])
-                draw_image(screen, images["setup"], left=0, bottom=SCREEN_SIZE[1])
-            elif last_response.status == ServerStatus.RECOGNIZED:
-                name = last_response.name
-                draw_text(screen, f"{name}さん、こんにちは！", (150, 150), fonts[100])
-                draw_text(screen, "バーを持ってね〜！", (150, 400), fonts[150])
-                draw_image(screen, images["guide"], right=SCREEN_SIZE[0], bottom=SCREEN_SIZE[1])
-            elif last_response.status == ServerStatus.COUNTING:
-                name = last_response.name
-                count = last_response.count
-                if count == 0:
-                    draw_text(screen, f"{name}さん、スタート！！！", (150, 150), fonts[100])
-                else:
-                    draw_text(screen, f"{name}さん、{count}回！！", (150, 150), fonts[100])
-                
-                # 回数に応じた画像の表示
-                img_key = "great" if count >= 20 else "good" if count >= 10 else "ok" if count >= 5 else "ng"
-                draw_image(screen, images[img_key], right=SCREEN_SIZE[0], bottom=SCREEN_SIZE[1])
+    def update(self, dt: int) -> Optional["Phase"]:
+        return self
+
+    def draw(self):
+        pass
+
+    def _draw_text(self, text, pos, size, color=Config.TEXT_COLOR):
+        font = self.assets.fonts.get(size)
+        if font:
+            text_surface = font.render(text, True, color)
+            self.screen.blit(text_surface, pos)
+
+    def _draw_image(self, image_key, **kwargs):
+        image = self.assets.images[image_key]
+        rect = image.get_rect(**kwargs)
+        self.screen.blit(image, rect)
+
+    def _draw_camera_with_landmarks(self):
+        if not self.debug:
+            return
+        frame = capture.read_rgb()
+        if frame is None:
+            return
+        pose_result = pose.detect_pose(frame)
+
+        # ランドマークを描画
+        if pose_result:
+            points_to_draw = []
+            if pose_result.nose:
+                points_to_draw.append((pose_result.nose, (0, 255, 0)))
+            if pose_result.left_hand:
+                points_to_draw.append((pose_result.left_hand, (255, 0, 0)))
+            if pose_result.right_hand:
+                points_to_draw.append((pose_result.right_hand, (0, 0, 255)))
+
+            for (x, y), color in points_to_draw:
+                center = (int(x * frame.shape[1]), int(y * frame.shape[0]))
+                cv2.circle(frame, center, 10, color, -1)
+
+        # chessboard_centerを描画
+        if self.state.chessboard_center:
+            bar_y = int(self.state.chessboard_center[1] * frame.shape[0])
+            threshold_bar_y = int(
+                bar_y + Config.CHINUP_RESET_THRESHOLD * frame.shape[0]
+            )
+            cv2.line(frame, (0, bar_y), (frame.shape[1], bar_y), (255, 255, 0), 2)
+            cv2.line(
+                frame,
+                (0, threshold_bar_y),
+                (frame.shape[1], threshold_bar_y),
+                (255, 0, 0),
+                2,
+            )
+            cv2.circle(
+                frame,
+                (
+                    int(self.state.chessboard_center[0] * frame.shape[1]),
+                    int(self.state.chessboard_center[1] * frame.shape[0]),
+                ),
+                10,
+                (0, 255, 255),
+                -1,
+            )
+
+        # Pygame用に変換して描画
+        frame = np.rot90(frame)
+        surface = pg.surfarray.make_surface(frame)
+        self.screen.blit(surface, (Config.SCREEN_SIZE[0] - surface.get_width(), 0))
 
 
-        elif phase == GamePhase.RESULT:
-            name = last_response.name
-            count = last_response.count
-            draw_text(screen, f"結果", (150, 150), fonts[100])
-            draw_text(screen, f"{name}さん、{count}回！！", (150, 400), fonts[150])
+class InitializingPhase(Phase):
+    def enter(self):
+        capture.open()
 
-            img_key = "great" if count >= 20 else "good" if count >= 10 else "ok" if count >= 5 else "ng"
-            draw_image(screen, images[img_key], right=SCREEN_SIZE[0], bottom=SCREEN_SIZE[1])
+    def exit(self):
+        capture.release()
 
-            if result_countdown > 0:
-                draw_progress(screen, result_countdown / RESULT_DURATION)
+    def update(self, dt: int):
+        frame = capture.read_rgb()
+        if frame is None:
+            logger.error("Failed to read frame from video capture")
+            return self
+        center = chess.detect_chessboard_center(frame)
+        if center:
+            logger.info(f"Chessboard center detected: {center}")
+            self.state.chessboard_center = center
+            self.assets.sounds["entry"].play()
+            return IdlePhase(self.game)
+        else:
+            logger.info("Waiting for chessboard detection...")
+        return self
 
-        # 状態遷移
-        if phase == GamePhase.RUNNING:
-            if last_response and last_response.status == ServerStatus.END:
-                phase = GamePhase.RESULT
-                result_countdown = RESULT_DURATION
-        elif phase == GamePhase.RESULT:
-            if result_countdown > 0:
-                result_countdown -= 1000 / FPS
-            else:
-                phase = GamePhase.WAITING
-                last_response = None
-                print("待機画面に戻ります。")
+    def draw(self):
+        self._draw_text("初期化中...", (150, 150), 100)
+        self._draw_image("wait", bottomleft=(0, Config.SCREEN_SIZE[1]))
+        self._draw_camera_with_landmarks()
 
-        pg.display.flip()
-        await asyncio.sleep(1 / FPS)
 
-    print("終了します")
-    if processing_task:
-        processing_task.cancel()
-    pg.quit()
+class IdlePhase(Phase):
+    def handle_event(self, event: pg.event.Event):
+        if event.type == pg.KEYDOWN and event.key == pg.K_RETURN:
+            capture.open()
+            self.assets.sounds["entry"].play()
+            logger.info("Game started. -> Recognizing phase")
+            return RecognizingPhase(self.game)
+        return None
+
+    def enter(self):
+        self.state.reset()
+        capture.release()
+
+    def draw(self):
+        self._draw_text("待機中...", (150, 150), 100)
+        self._draw_text("Enterでスタート！！", (150, 400), 100)
+        self._draw_image("wait", bottomleft=(0, Config.SCREEN_SIZE[1]))
+
+
+class RecognizingPhase(Phase):
+    def update(self, dt: int):
+        self.state.timers["recognizing"] -= dt
+        if self.state.timers["recognizing"] <= 0:
+            logger.info("Recognition failed, returning to idle.")
+            return IdlePhase(self.game)
+
+        frame = capture.read_rgb()
+        if frame is None:
+            logger.error("Failed to read frame from video capture")
+            return self
+
+        names = face.recognize_face_names(frame)
+        if len(names) == 1:
+            self.state.name = names[0]
+            logger.info(f"Recognized: {self.state.name}")
+            self.state.nickname = db.get_nickname(self.state.name)
+            self.assets.sounds["entry"].play()
+            return WaitingHandsPhase(self.game)
+        elif len(names) > 1:
+            logger.warning(f"Multiple faces recognized: {names}")
+
+        return self
+
+    def draw(self):
+        self._draw_text("顔認証中...", (150, 150), 100)
+        self._draw_image("setup", bottomleft=(0, Config.SCREEN_SIZE[1]))
+        progress = self.state.timers["recognizing"] / Config.RECOGNIZING_TIMEOUT_MS
+        pg.draw.rect(
+            self.screen,
+            Config.PROGRESS_BAR_COLOR,
+            (0, 0, Config.SCREEN_SIZE[0] * progress, 50),
+        )
+
+
+class WaitingHandsPhase(Phase):
+    def update(self, dt: int):
+        frame = capture.read_rgb()
+        if frame is None:
+            logger.error("Failed to read frame from video capture")
+            return self  # or IdlePhase
+
+        pose_result = pose.detect_pose(frame)
+        if pose_result and pose_result.left_hand and pose_result.right_hand:
+            if (
+                pose_result.left_hand[1] <= self.state.chessboard_center[1]
+                and pose_result.right_hand[1] <= self.state.chessboard_center[1]
+            ):
+                self.state.wide = (
+                    pose_result.left_hand[0] > self.state.chessboard_center[0]
+                )
+                logger.info("Hands detected, starting count.")
+                self.assets.sounds["entry"].play()
+                return CountingPhase(self.game)
+        return self
+
+    def draw(self):
+        self._draw_text("バーを持ってね〜！", (150, 150), 100)
+        self._draw_image("guide", bottomright=Config.SCREEN_SIZE)
+        self._draw_camera_with_landmarks()
+
+
+class CountingPhase(Phase):
+    def update(self, dt: int):
+        frame = capture.read_rgb()
+        if frame is None:
+            logger.error("Failed to read frame from video capture")
+            return ResultPhase(self.game)
+
+        pose_result = pose.detect_pose(frame)
+
+        if (
+            not (
+                pose_result
+                and pose_result.nose
+                and pose_result.left_hand
+                and pose_result.right_hand
+            )
+            or pose_result.left_hand[1]
+            > self.state.chessboard_center[1] + Config.CHINUP_RESET_THRESHOLD
+            or pose_result.right_hand[1]
+            > self.state.chessboard_center[1] + Config.CHINUP_RESET_THRESHOLD
+        ):
+            self.state.timers["counting"] -= dt
+            if self.state.timers["counting"] <= 0:
+                return ResultPhase(self.game)
+        else:
+            self.state.reset_timer("counting")
+            # 顔がバーを越えたらカウント
+            if (
+                pose_result.nose[1] <= self.state.chessboard_center[1]
+                and not self.state.chinuped
+            ):
+                self.state.chinuped = True
+                self.state.count += 1
+                self.assets.sounds["count"].play()
+                logger.info(f"Count incremented: {self.state.count}")
+            # 顔が一定以上下がったらリセット
+            if (
+                pose_result.nose[1]
+                > self.state.chessboard_center[1] + Config.CHINUP_RESET_THRESHOLD
+            ):
+                self.state.chinuped = False
+        return self
+
+    def draw(self):
+        self._draw_text("カウント中...", (150, 150), 100)
+        self._draw_text(
+            f"{self.state.nickname}さん {self.state.count}回！！", (150, 400), 150
+        )
+        self._draw_text(
+            "wide" if self.state.wide else "narrow",
+            (150, 600),
+            100,
+            color=(0, 255, 0) if self.state.wide else (255, 0, 0),
+        )
+        image = self.assets.get_rank_image(self.state.count)
+        rect = image.get_rect(bottomright=Config.SCREEN_SIZE)
+        self.screen.blit(image, rect)
+        self._draw_camera_with_landmarks()
+
+
+class ResultPhase(Phase):
+    def __init__(self, game: "Game"):
+        super().__init__(game)
+
+    def enter(self):
+        db.register_record(self.state.name, self.state.count, self.state.wide)
+        capture.release()
+
+    def handle_event(self, event: pg.event.Event):
+        if event.type == pg.KEYDOWN and event.key == pg.K_RETURN:
+            logger.info("Game ended. -> Idle phase")
+            return IdlePhase(self.game)
+        return None
+
+    def update(self, dt: int):
+        self.state.timers["result"] -= dt
+        if self.state.timers["result"] <= 0:
+            logger.info("Result phase ended, returning to idle state.")
+            return IdlePhase(self.game)
+        return self
+
+    def draw(self):
+        self._draw_text("結果", (150, 150), 100)
+        self._draw_text(
+            f"{self.state.nickname}さん {self.state.count}回！！", (150, 400), 150
+        )
+        image = self.assets.get_rank_image(self.state.count)
+        rect = image.get_rect(bottomright=Config.SCREEN_SIZE)
+        self.screen.blit(image, rect)
+        progress = self.state.timers["result"] / Config.RESULT_DURATION_MS
+        pg.draw.rect(
+            self.screen,
+            Config.PROGRESS_BAR_COLOR,
+            (0, 0, Config.SCREEN_SIZE[0] * progress, 50),
+        )
+
+
+class Game:
+    """ゲーム全体の管理とメインループを実行するクラス"""
+
+    def __init__(self, args):
+        pg.init()
+
+        # 外部モジュールの初期化
+        face.init(args.face_feature)
+        pose.init(args.pose_model_complexity)
+        capture.init(args.capture_width, args.capture_height)
+
+        # ゲームの初期設定
+        self.screen = pg.display.set_mode(
+            Config.SCREEN_SIZE,
+            pg.RESIZABLE if args.resizable else pg.FULLSCREEN,
+        )
+        pg.display.set_caption("kensuiou")
+        self.clock = pg.time.Clock()
+        self.assets = Assets()
+        self.state = State()
+        self.debug = args.debug
+        self.current_phase: Phase = InitializingPhase(self)
+
+    def run(self):
+        running = True
+        while running:
+            dt = self.clock.tick(Config.FPS)
+
+            for event in pg.event.get():
+                if event.type == pg.QUIT or (
+                    event.type == pg.KEYDOWN and event.key == pg.K_ESCAPE
+                ):
+                    running = False
+
+                next_phase = self.current_phase.handle_event(event)
+                if next_phase:
+                    self._change_phase(next_phase)
+
+            next_phase = self.current_phase.update(dt)
+            if next_phase is not self.current_phase:
+                self._change_phase(next_phase)
+
+            self.screen.fill(Config.BACKGROUND_COLOR)
+            self.current_phase.draw()
+            if self.debug:
+                self._draw_fps()
+            pg.display.flip()
+
+        self._cleanup()
+
+    def _change_phase(self, new_phase: Phase):
+        if new_phase and new_phase is not self.current_phase:
+            self.current_phase.exit()
+            self.current_phase = new_phase
+            self.current_phase.enter()
+
+    def _draw_fps(self):
+        font = self.assets.fonts[50]
+        fps_text = f"FPS: {int(self.clock.get_fps())}"
+        text_surface = font.render(fps_text, True, Config.FPS_COUNTER_COLOR)
+        self.screen.blit(text_surface, (10, 10))
+
+    def _cleanup(self):
+        logger.info("Exiting game loop, releasing resources.")
+        capture.release()
+        pg.quit()
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Local Kensuiou Application")
+    parser.add_argument(
+        "--face-feature", type=str, default="assets/models/face_features.json"
+    )
+    parser.add_argument(
+        "--pose-model-complexity", choices=[0, 1, 2], type=int, default=0
+    )
+    parser.add_argument("--capture-width", type=int, default=640)
+    parser.add_argument("--capture-height", type=int, default=480)
+    parser.add_argument("--resizable", action="store_true")
+    parser.add_argument("--debug", action="store_true")
+
+    args = parser.parse_args()
+
+    game = Game(args)
+    game.run()
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Local Kensuiou Application")
-    parser.add_argument("--face-feature", type=str, default="models/face_features.json", help="Path to face features file")
-    args = parser.parse_args()
-    
-    asyncio.run(main(args))
+    main()

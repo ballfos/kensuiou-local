@@ -13,4 +13,5 @@ wheels/
 .env
 
 assets
+assets.zip
 temp_images
