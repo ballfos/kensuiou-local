@@ -45,37 +45,6 @@ def recognize_face_names(frame: cv2.Mat, threshold: float = 0.6):
     return recognized_names
 
 
-def identify_person(image_path, face_features_path, threshold=0.6):
-    return "tester"
-
-    # 既存の顔データをロード
-    with open(face_features_path, "r") as f:
-        known_faces = json.load(f)
-
-    known_encodings = [np.array(face["encoding"]) for face in known_faces]
-    known_names = [face["name"] for face in known_faces]
-
-    # 入力画像を読み込み、顔のエンコーディングを抽出
-    image = face_recognition.load_image_file(image_path)
-    face_encodings = face_recognition.face_encodings(image)
-
-    if len(face_encodings) == 0:
-        return None
-
-    # 入力画像に含まれる最初の顔で判定
-    input_encoding = face_encodings[0]
-    distances = face_recognition.face_distance(known_encodings, input_encoding)
-
-    # 最も近い顔のインデックスを取得
-    best_match_index = np.argmin(distances)
-
-    # 閾値以下であれば名前を返し、超えていれば "guest" を返す
-    if distances[best_match_index] <= threshold:
-        return known_names[best_match_index]
-    else:
-        return None
-
-
 if __name__ == "__main__":
     """動作テスト"""
     import sys
@@ -85,12 +54,12 @@ if __name__ == "__main__":
 
     logging.basicConfig(level=logging.INFO)
 
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(sys.argv[1] if len(sys.argv) > 1 else 0)
     if not cap.isOpened():
         logger.error("Could not open video capture")
         exit(1)
 
-    init(sys.argv[1] if len(sys.argv) > 1 else "assets/face_features.json")
+    init(sys.argv[2] if len(sys.argv) > 2 else "assets/face_features.json")
 
     while True:
         start_time = time.time()

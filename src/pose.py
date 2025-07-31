@@ -49,13 +49,14 @@ def detect_pose(frame: cv2.Mat) -> PoseDetectionResult:
 
 if __name__ == "__main__":
     """動作テスト"""
+    import sys
     import time
 
     import cv2
 
     logging.basicConfig(level=logging.INFO)
 
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(sys.argv[1] if len(sys.argv) > 1 else 0)
     if not cap.isOpened():
         logger.error("Could not open video capture")
         exit(1)
