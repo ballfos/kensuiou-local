@@ -39,8 +39,6 @@ def recognize_face_names(frame: cv2.Mat, threshold: float = 0.6):
         best_match_index = np.argmin(distances)
         if distances[best_match_index] <= threshold:
             recognized_names.append(known_names[best_match_index])
-        else:
-            recognized_names.append("unknown")
 
     return recognized_names
 

@@ -10,6 +10,7 @@ import numpy as np
 import pygame as pg
 
 import capture
+import chess
 import db
 import face
 import pose
@@ -41,7 +42,6 @@ class Config:
     FPS_COUNTER_COLOR = (255, 255, 0)
 
     # Pose estimation thresholds
-    BAR_Y_COORDINATE = 0.3
     CHINUP_RESET_THRESHOLD = 0.2
 
 
@@ -92,6 +92,7 @@ class State:
 
     def __init__(self):
         self.reset()
+        self.chessboard_center: Optional[tuple[float, float]] = None
 
     def reset(self):
         self.count: int = 0
@@ -110,6 +111,7 @@ class State:
 
 
 class GamePhase(Enum):
+    INITIALIZING = auto()
     IDLE = auto()
     RECOGNIZING = auto()
     WAITING_HANDS = auto()
@@ -126,6 +128,8 @@ class Phase:
         self.assets = game.assets
         self.screen = game.screen
         self.debug = game.debug
+
+        self.enter()
 
     def enter(self):
         pass
@@ -157,6 +161,8 @@ class Phase:
         if not self.debug:
             return
         frame = capture.read_rgb()
+        if frame is None:
+            return
         pose_result = pose.detect_pose(frame)
 
         # ランドマークを描画
@@ -173,22 +179,63 @@ class Phase:
                 center = (int(x * frame.shape[1]), int(y * frame.shape[0]))
                 cv2.circle(frame, center, 10, color, -1)
 
-        # BAR_Y_COORDINATEを描画
-        bar_y = int(Config.BAR_Y_COORDINATE * frame.shape[0])
-        threshold_bar_y = int(bar_y + Config.CHINUP_RESET_THRESHOLD * frame.shape[0])
-        cv2.line(frame, (0, bar_y), (frame.shape[1], bar_y), (255, 255, 0), 2)
-        cv2.line(
-            frame,
-            (0, threshold_bar_y),
-            (frame.shape[1], threshold_bar_y),
-            (255, 0, 0),
-            2,
-        )
+        # chessboard_centerを描画
+        if self.state.chessboard_center:
+            bar_y = int(self.state.chessboard_center[1] * frame.shape[0])
+            threshold_bar_y = int(
+                bar_y + Config.CHINUP_RESET_THRESHOLD * frame.shape[0]
+            )
+            cv2.line(frame, (0, bar_y), (frame.shape[1], bar_y), (255, 255, 0), 2)
+            cv2.line(
+                frame,
+                (0, threshold_bar_y),
+                (frame.shape[1], threshold_bar_y),
+                (255, 0, 0),
+                2,
+            )
+            cv2.circle(
+                frame,
+                (
+                    int(self.state.chessboard_center[0] * frame.shape[1]),
+                    int(self.state.chessboard_center[1] * frame.shape[0]),
+                ),
+                10,
+                (0, 255, 255),
+                -1,
+            )
 
         # Pygame用に変換して描画
         frame = np.rot90(frame)
         surface = pg.surfarray.make_surface(frame)
         self.screen.blit(surface, (Config.SCREEN_SIZE[0] - surface.get_width(), 0))
+
+
+class InitializingPhase(Phase):
+    def enter(self):
+        capture.open()
+
+    def exit(self):
+        capture.release()
+
+    def update(self, dt: int):
+        frame = capture.read_rgb()
+        if frame is None:
+            logger.error("Failed to read frame from video capture")
+            return self
+        center = chess.detect_chessboard_center(frame)
+        if center:
+            logger.info(f"Chessboard center detected: {center}")
+            self.state.chessboard_center = center
+            self.assets.sounds["entry"].play()
+            return IdlePhase(self.game)
+        else:
+            logger.info("Waiting for chessboard detection...")
+        return self
+
+    def draw(self):
+        self._draw_text("初期化中...", (150, 150), 100)
+        self._draw_image("wait", bottomleft=(0, Config.SCREEN_SIZE[1]))
+        self._draw_camera_with_landmarks()
 
 
 class IdlePhase(Phase):
@@ -218,6 +265,9 @@ class RecognizingPhase(Phase):
             return IdlePhase(self.game)
 
         frame = capture.read_rgb()
+        if frame is None:
+            logger.error("Failed to read frame from video capture")
+            return self
 
         names = face.recognize_face_names(frame)
         if len(names) == 1:
@@ -246,14 +296,18 @@ class WaitingHandsPhase(Phase):
     def update(self, dt: int):
         frame = capture.read_rgb()
         if frame is None:
+            logger.error("Failed to read frame from video capture")
             return self  # or IdlePhase
 
         pose_result = pose.detect_pose(frame)
         if pose_result and pose_result.left_hand and pose_result.right_hand:
             if (
-                pose_result.left_hand[1] <= Config.BAR_Y_COORDINATE
-                and pose_result.right_hand[1] <= Config.BAR_Y_COORDINATE
+                pose_result.left_hand[1] <= self.state.chessboard_center[1]
+                and pose_result.right_hand[1] <= self.state.chessboard_center[1]
             ):
+                self.state.wide = (
+                    pose_result.left_hand[0] > self.state.chessboard_center[0]
+                )
                 logger.info("Hands detected, starting count.")
                 self.assets.sounds["entry"].play()
                 return CountingPhase(self.game)
@@ -269,6 +323,7 @@ class CountingPhase(Phase):
     def update(self, dt: int):
         frame = capture.read_rgb()
         if frame is None:
+            logger.error("Failed to read frame from video capture")
             return ResultPhase(self.game)
 
         pose_result = pose.detect_pose(frame)
@@ -281,9 +336,9 @@ class CountingPhase(Phase):
                 and pose_result.right_hand
             )
             or pose_result.left_hand[1]
-            > Config.BAR_Y_COORDINATE + Config.CHINUP_RESET_THRESHOLD
+            > self.state.chessboard_center[1] + Config.CHINUP_RESET_THRESHOLD
             or pose_result.right_hand[1]
-            > Config.BAR_Y_COORDINATE + Config.CHINUP_RESET_THRESHOLD
+            > self.state.chessboard_center[1] + Config.CHINUP_RESET_THRESHOLD
         ):
             self.state.timers["counting"] -= dt
             if self.state.timers["counting"] <= 0:
@@ -292,7 +347,7 @@ class CountingPhase(Phase):
             self.state.reset_timer("counting")
             # 顔がバーを越えたらカウント
             if (
-                pose_result.nose[1] <= Config.BAR_Y_COORDINATE
+                pose_result.nose[1] <= self.state.chessboard_center[1]
                 and not self.state.chinuped
             ):
                 self.state.chinuped = True
@@ -302,7 +357,7 @@ class CountingPhase(Phase):
             # 顔が一定以上下がったらリセット
             if (
                 pose_result.nose[1]
-                > Config.BAR_Y_COORDINATE + Config.CHINUP_RESET_THRESHOLD
+                > self.state.chessboard_center[1] + Config.CHINUP_RESET_THRESHOLD
             ):
                 self.state.chinuped = False
         return self
@@ -310,7 +365,13 @@ class CountingPhase(Phase):
     def draw(self):
         self._draw_text("カウント中...", (150, 150), 100)
         self._draw_text(
-            f"{self.state.name}さん {self.state.count}回！！", (150, 400), 150
+            f"{self.state.nickname}さん {self.state.count}回！！", (150, 400), 150
+        )
+        self._draw_text(
+            "wide" if self.state.wide else "narrow",
+            (150, 600),
+            100,
+            color=(0, 255, 0) if self.state.wide else (255, 0, 0),
         )
         image = self.assets.get_rank_image(self.state.count)
         rect = image.get_rect(bottomright=Config.SCREEN_SIZE)
@@ -321,10 +382,10 @@ class CountingPhase(Phase):
 class ResultPhase(Phase):
     def __init__(self, game: "Game"):
         super().__init__(game)
-        capture.release()
 
     def enter(self):
         db.register_record(self.state.name, self.state.count, self.state.wide)
+        capture.release()
 
     def handle_event(self, event: pg.event.Event):
         if event.type == pg.KEYDOWN and event.key == pg.K_RETURN:
@@ -342,7 +403,7 @@ class ResultPhase(Phase):
     def draw(self):
         self._draw_text("結果", (150, 150), 100)
         self._draw_text(
-            f"{self.state.name}さん {self.state.count}回！！", (150, 400), 150
+            f"{self.state.nickname}さん {self.state.count}回！！", (150, 400), 150
         )
         image = self.assets.get_rank_image(self.state.count)
         rect = image.get_rect(bottomright=Config.SCREEN_SIZE)
@@ -360,6 +421,13 @@ class Game:
 
     def __init__(self, args):
         pg.init()
+
+        # 外部モジュールの初期化
+        face.init(args.face_feature)
+        pose.init(args.pose_model_complexity)
+        capture.init(args.capture_width, args.capture_height)
+
+        # ゲームの初期設定
         self.screen = pg.display.set_mode(
             Config.SCREEN_SIZE,
             pg.RESIZABLE if args.resizable else pg.FULLSCREEN,
@@ -369,12 +437,7 @@ class Game:
         self.assets = Assets()
         self.state = State()
         self.debug = args.debug
-        self.current_phase: Phase = IdlePhase(self)
-
-        # 外部モジュールの初期化
-        face.init(args.face_feature)
-        pose.init(args.pose_model_complexity)
-        capture.init(args.capture_width, args.capture_height)
+        self.current_phase: Phase = InitializingPhase(self)
 
     def run(self):
         running = True

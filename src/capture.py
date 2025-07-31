@@ -26,14 +26,17 @@ def read() -> cv2.Mat:
     global cap
     if not cap.isOpened():
         raise RuntimeError("Video capture is not opened")
+
     ret, frame = cap.read()
     if not ret:
-        raise RuntimeError("Failed to read frame from video capture")
+        return None
     return frame
 
 
 def read_rgb() -> cv2.Mat:
     frame = read()
+    if frame is None:
+        return None
     return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
 
