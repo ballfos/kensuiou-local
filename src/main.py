@@ -32,7 +32,7 @@ class Config:
     SCREEN_SIZE = (1920, 1080)
     FPS = 5
     RESULT_DURATION_MS = 10000
-    RECOGNIZING_TIMEOUT_MS = 10000
+    RECOGNIZING_TIMEOUT_MS = 20000
     COUNTING_TIMEOUT_MS = 2000
 
     # Colors
@@ -66,16 +66,21 @@ class Assets:
 
     def _load_images(self) -> Dict[str, pg.Surface]:
         image_files = {
-            "wait": "assets/images/wait.png",
-            "setup": "assets/images/setup.png",
-            "guide": "assets/images/guide.png",
-            "ng": "assets/images/ng.png",
-            "ok": "assets/images/ok.png",
-            "good": "assets/images/good.png",
-            "great": "assets/images/great.png",
+            "wait": ("assets/images/wait.png", (720, 720)),
+            "setup": ("assets/images/setup.png", (720, 720)),
+            "guide": ("assets/images/guide.png", (720, 720)),
+            "ng": ("assets/images/ng.png", (720, 720)),
+            "ok": ("assets/images/ok.png", (720, 720)),
+            "good": ("assets/images/good.png", (720, 720)),
+            "great": ("assets/images/great.png", (720, 720)),
+            "arrowup": ("assets/images/arrowup.png", (240, 240)),
+            "arrowdown": ("assets/images/arrowdown.png", (240, 240)),
         }
-        images = {key: pg.image.load(path) for key, path in image_files.items()}
-        return {key: pg.transform.scale(img, (720, 720)) for key, img in images.items()}
+
+        return {
+            key: pg.transform.scale(pg.image.load(path), size)
+            for key, (path, size) in image_files.items()
+        }
 
     def get_rank_image(self, count: int) -> pg.Surface:
         if count >= 20:
@@ -217,6 +222,13 @@ class InitializingPhase(Phase):
     def exit(self):
         capture.release()
 
+    def handle_event(self, event: pg.event.Event):
+        if event.type == pg.KEYDOWN and event.key == pg.K_RETURN:
+            logger.info("Skipping initialization phase.")
+            self.state.chessboard_center = (0.7, 0.3)
+            return IdlePhase(self.game)
+        return None
+
     def update(self, dt: int):
         frame = capture.read_rgb()
         if frame is None:
@@ -314,7 +326,8 @@ class WaitingHandsPhase(Phase):
         return self
 
     def draw(self):
-        self._draw_text("バーを持ってね〜！", (150, 150), 100)
+        self._draw_text(self.state.nickname, (150, 150), 100)
+        self._draw_text("バーを持ってね〜！", (150, 400), 100)
         self._draw_image("guide", bottomright=Config.SCREEN_SIZE)
         self._draw_camera_with_landmarks()
 
@@ -364,14 +377,17 @@ class CountingPhase(Phase):
 
     def draw(self):
         self._draw_text("カウント中...", (150, 150), 100)
-        self._draw_text(
-            f"{self.state.nickname}さん {self.state.count}回！！", (150, 400), 150
-        )
+        self._draw_text(f"{self.state.nickname}さん", (150, 400), 150)
+        self._draw_text(f"{self.state.count}回！", (150, 600), 200)
         self._draw_text(
             "wide" if self.state.wide else "narrow",
-            (150, 600),
+            (1000, 150),
             100,
             color=(0, 255, 0) if self.state.wide else (255, 0, 0),
+        )
+        self._draw_image(
+            "arrowdown" if self.state.chinuped else "arrowup",
+            topright=(Config.SCREEN_SIZE[0] - 150, 100),
         )
         image = self.assets.get_rank_image(self.state.count)
         rect = image.get_rect(bottomright=Config.SCREEN_SIZE)
@@ -402,9 +418,8 @@ class ResultPhase(Phase):
 
     def draw(self):
         self._draw_text("結果", (150, 150), 100)
-        self._draw_text(
-            f"{self.state.nickname}さん {self.state.count}回！！", (150, 400), 150
-        )
+        self._draw_text(f"{self.state.nickname}さん", (150, 400), 150)
+        self._draw_text(f"{self.state.count}回！", (150, 600), 200)
         image = self.assets.get_rank_image(self.state.count)
         rect = image.get_rect(bottomright=Config.SCREEN_SIZE)
         self.screen.blit(image, rect)
