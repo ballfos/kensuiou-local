@@ -11,7 +11,7 @@ wheels/
 
 # Custom
 .env
-
+.DS_Store
 assets
 assets.zip
 temp_images
