@@ -220,13 +220,14 @@ class InitializingPhase(Phase):
         capture.open()
 
     def exit(self):
-        capture.release()
+        # capture.release()
+        pass
 
     def handle_event(self, event: pg.event.Event):
         if event.type == pg.KEYDOWN and event.key == pg.K_RETURN:
             logger.info("Skipping initialization phase.")
             self.state.chessboard_center = (0.7, 0.3)
-            return IdlePhase(self.game)
+            return RecognizingPhase(self.game)
         return None
 
     def update(self, dt: int):
@@ -239,7 +240,7 @@ class InitializingPhase(Phase):
             logger.info(f"Chessboard center detected: {center}")
             self.state.chessboard_center = center
             self.assets.sounds["entry"].play()
-            return IdlePhase(self.game)
+            return RecognizingPhase(self.game)
         else:
             logger.info("Waiting for chessboard detection...")
         return self
@@ -253,10 +254,10 @@ class InitializingPhase(Phase):
 class IdlePhase(Phase):
     def handle_event(self, event: pg.event.Event):
         if event.type == pg.KEYDOWN and event.key == pg.K_RETURN:
-            capture.open()
+            # capture.open()
             self.assets.sounds["entry"].play()
             logger.info("Game started. -> Recognizing phase")
-            return RecognizingPhase(self.game)
+            return InitializingPhase(self.game)
         return None
 
     def enter(self):
@@ -452,7 +453,7 @@ class Game:
         self.assets = Assets()
         self.state = State()
         self.debug = args.debug
-        self.current_phase: Phase = InitializingPhase(self)
+        self.current_phase: Phase = IdlePhase(self)
 
     def run(self):
         running = True
