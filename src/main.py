@@ -42,7 +42,7 @@ class Config:
     FPS_COUNTER_COLOR = (255, 255, 0)
 
     # Pose estimation thresholds
-    CHINUP_RESET_THRESHOLD = 0.2
+    CHINUP_RESET_THRESHOLD = 0.1
 
 
 class Assets:
@@ -66,7 +66,7 @@ class Assets:
 
     def _load_images(self) -> Dict[str, pg.Surface]:
         image_files = {
-            "wait": ("assets/images/wait.png", (720, 720)),
+            "wait": ("assets/images/wait.png", (700, 700)),
             "setup": ("assets/images/setup.png", (720, 720)),
             "guide": ("assets/images/guide.png", (720, 720)),
             "ng": ("assets/images/ng.png", (720, 720)),
@@ -110,6 +110,7 @@ class State:
             "counting": Config.COUNTING_TIMEOUT_MS,
             "result": Config.RESULT_DURATION_MS,
         }
+        self.isguest: bool = False
 
     def reset_timer(self, name: str):
         self.timers[name] = getattr(Config, f"{name.upper()}_TIMEOUT_MS", 0)
@@ -253,21 +254,36 @@ class InitializingPhase(Phase):
 
 class IdlePhase(Phase):
     def handle_event(self, event: pg.event.Event):
-        if event.type == pg.KEYDOWN and event.key == pg.K_RETURN:
-            # capture.open()
-            self.assets.sounds["entry"].play()
-            logger.info("Game started. -> Recognizing phase")
-            return InitializingPhase(self.game)
-        return None
+        if event.type == pg.KEYDOWN:
+            # ゲーム開始
+            if event.key in (pg.K_RETURN, pg.K_SPACE):
+                capture.open()
+                self.assets.sounds["entry"].play()
+                logger.info("Game started. -> Initializing Phase")
+                return InitializingPhase(self.game)
+
+            # 左右キーでモード切替
+            elif event.key == pg.K_LEFT or event.key == pg.K_RIGHT:
+                self.state.isguest = not self.state.isguest
+                logger.info(
+                    f"Mode switched to {'Guest' if self.state.isguest else 'User'} mode."
+                )
+
+        return None   
 
     def enter(self):
         self.state.reset()
         capture.release()
 
     def draw(self):
-        self._draw_text("待機中...", (150, 150), 100)
-        self._draw_text("Enterでスタート！！", (150, 400), 100)
+        self._draw_text("Enterでスタート！！", (150, 150), 100)
+        self._draw_text("↔︎でモード切替", (150, 400), 100)
         self._draw_image("wait", bottomleft=(0, Config.SCREEN_SIZE[1]))
+        if self.state.isguest:
+            self._draw_text("ゲストモード", (1200, 150), 50, color=(255, 0, 0))
+        
+        elif not self.state.isguest:
+            self._draw_text("ユーザーモード", (1200, 150), 50, color=(0, 255, 0))
 
 
 class RecognizingPhase(Phase):
@@ -281,28 +297,37 @@ class RecognizingPhase(Phase):
         if frame is None:
             logger.error("Failed to read frame from video capture")
             return self
-
-        names = face.recognize_face_names(frame)
-        if len(names) == 1:
-            self.state.name = names[0]
-            logger.info(f"Recognized: {self.state.name}")
-            self.state.nickname = db.get_nickname(self.state.name)
+        
+        if self.state.isguest:
+            logger.info("Guest mode: skipping face recognition.")
+            self.state.name = "guest"
+            self.state.nickname = "ゲスト"
             self.assets.sounds["entry"].play()
             return WaitingHandsPhase(self.game)
-        elif len(names) > 1:
-            logger.warning(f"Multiple faces recognized: {names}")
+
+        else:
+            names = face.recognize_face_names(frame)
+            if len(names) == 1:
+                self.state.name = names[0]
+                logger.info(f"Recognized: {self.state.name}")
+                self.state.nickname = db.get_nickname(self.state.name)
+                self.assets.sounds["entry"].play()
+                return WaitingHandsPhase(self.game)
+            elif len(names) > 1:
+                logger.warning(f"Multiple faces recognized: {names}")
 
         return self
 
     def draw(self):
-        self._draw_text("顔認証中...", (150, 150), 100)
-        self._draw_image("setup", bottomleft=(0, Config.SCREEN_SIZE[1]))
-        progress = self.state.timers["recognizing"] / Config.RECOGNIZING_TIMEOUT_MS
-        pg.draw.rect(
-            self.screen,
-            Config.PROGRESS_BAR_COLOR,
-            (0, 0, Config.SCREEN_SIZE[0] * progress, 50),
-        )
+        if not self.state.isguest:
+            self._draw_text("顔認証中...", (150, 150), 100)
+            self._draw_image("setup", bottomleft=(0, Config.SCREEN_SIZE[1]))
+            progress = self.state.timers["recognizing"] / Config.RECOGNIZING_TIMEOUT_MS
+            pg.draw.rect(
+                self.screen,
+                Config.PROGRESS_BAR_COLOR,
+                (0, 0, Config.SCREEN_SIZE[0] * progress, 50),
+            )
 
 
 class WaitingHandsPhase(Phase):
@@ -327,7 +352,7 @@ class WaitingHandsPhase(Phase):
         return self
 
     def draw(self):
-        self._draw_text(self.state.nickname, (150, 150), 100)
+        self._draw_text(f"{self.state.nickname}さん", (150, 150), 100)
         self._draw_text("バーを持ってね〜！", (150, 400), 100)
         self._draw_image("guide", bottomright=Config.SCREEN_SIZE)
         self._draw_camera_with_landmarks()
@@ -401,7 +426,10 @@ class ResultPhase(Phase):
         super().__init__(game)
 
     def enter(self):
-        db.register_record(self.state.name, self.state.count, self.state.wide)
+        if self.state.isguest:
+            logger.info("Guest mode: skipping database registration.")
+        else:
+            db.register_record(self.state.name, self.state.count, self.state.wide)
         capture.release()
 
     def handle_event(self, event: pg.event.Event):
